@@ -1,0 +1,22 @@
+# Chemical Brain - True Emergent Intelligence
+
+# Core (required)
+numpy>=1.20.0
+
+# Full object graph serialization (recommended)
+dill>=0.3.0
+
+# GUI (optional)
+PyQt6>=6.4.0
+
+# OpenAI Training (optional)
+openai>=1.0.0
+
+# Installation:
+#   pip install -r requirements.txt
+#
+# Run CLI:
+#   python chatbot.py
+#
+# Run GUI:
+#   python run_dashboard.py

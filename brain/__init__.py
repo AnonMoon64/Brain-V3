@@ -1,15 +1,30 @@
 # Chemical Brain - True Emergent Intelligence
 # Enhanced with Mouse-Level Complexity Systems
+# Now with Three-System Brain Architecture
 #
 # Memory IS structure. Responses emerge from dynamics.
 # No templates. No separate memory store.
+#
+# THREE-SYSTEM ARCHITECTURE:
+# System 1: Sparse Cortical Engine (representation, perception, prediction)
+# System 2: Dynamic Recurrent Core (memory, imagination, sequences)
+# System 3: Neuromodulated Learning (motivation, plasticity, value)
 
 # Advanced neuromodulation with kinetic receptor binding (10 neurotransmitters)
+# Enhanced with: stochastic kinetics, cross-modulator antagonism, epigenetic switches,
+# time-asymmetric plasticity, cross-system error bargaining, homeostatic stability
 from .neuromodulation import (
-    KineticNeuromodulationSystem as NeuromodulationSystem, 
+    KineticNeuromodulationSystem as NeuromodulationSystem,
     NeuromodulatorType, ReceptorType,
     NeuromodulatorReceptor, ReceptorField, KineticNeuromodulator,
-    ThreeFactorLearning, ModulatorType
+    ThreeFactorLearning, ModulatorType,
+    # New enhanced components
+    StochasticKineticParams,
+    CrossModulatorInteraction, CrossModulatorMatrix,
+    EpigeneticSwitch, EpigeneticLearningModifiers,
+    TemporalCreditAssignment,
+    ErrorBargainingSystem,
+    HomeostaticController
 )
 
 # Hierarchical cortical architecture
@@ -71,6 +86,15 @@ from .integrated_brain import (
     RegionalProcessor, create_brain
 )
 
+# Three-System Brain Architecture (NEW)
+from .three_system_brain import (
+    ThreeSystemBrain,
+    SparseCorticalEngine,
+    DynamicRecurrentCore,
+    NeuromodulatedLearningSystem,
+    create_three_system_brain
+)
+
 # Persistence and auto-save
 from .persistence import (
     BrainPersistence, AutoSaveMixin,
@@ -82,43 +106,51 @@ __all__ = [
     'NeuromodulationSystem', 'NeuromodulatorType', 'ReceptorType',
     'NeuromodulatorReceptor', 'ReceptorField', 'KineticNeuromodulator',
     'ThreeFactorLearning', 'ModulatorType',
-    
+    # Enhanced neuromodulation components
+    'StochasticKineticParams', 'CrossModulatorInteraction', 'CrossModulatorMatrix',
+    'EpigeneticSwitch', 'EpigeneticLearningModifiers',
+    'TemporalCreditAssignment', 'ErrorBargainingSystem', 'HomeostaticController',
+
     # Cortical architecture
     'CorticalHierarchy', 'Minicolumn', 'CorticalLayer',
     'TopographicMap', 'CorticalArea', 'LateralInhibition',
-    
+
     # Metabolism
     'MetabolicNetwork', 'NeuronMetabolism', 'MitochondrialState',
     'SynapticScaling', 'IntrinsicPlasticity',
-    
+
     # Signal processing
     'SignalProcessor', 'InputNormalizer',
     'NoiseInjector', 'OutlierFilter', 'NormalizationType',
-    
+
     # Language decoder
     'NeuralLanguageDecoder', 'AttractorNetwork', 'SemanticSpace',
     'BeamSearchDecoder',
-    
+
     # Sparse network
     'SparseNeuralNetwork', 'SparseNeuronState', 'KWinnersLayer',
     'SparseDistributedMemory', 'EventDrivenSimulator',
-    
+
     # GPU acceleration
     'GPUAccelerator', 'QuantizedArray', 'VectorizedNeuronState',
     'BatchedSynapticUpdate',
-    
+
     # Reservoir
     'HybridReservoir', 'EchoStateNetwork', 'LiquidStateMachine',
     'ReservoirConfig',
-    
+
     # Hierarchical time
     'HierarchicalTimeManager', 'TemporalScale', 'NestedOscillator',
     'TemporalIntegrator', 'OscillatorBand', 'HierarchicalTimeProcessor',
-    
+
     # Integrated brain
     'IntegratedBrain', 'BrainConfig', 'BrainState', 'IntegratedBrainRegion',
     'RegionalProcessor', 'create_brain',
-    
+
+    # Three-System Brain Architecture (NEW)
+    'ThreeSystemBrain', 'SparseCorticalEngine', 'DynamicRecurrentCore',
+    'NeuromodulatedLearningSystem', 'create_three_system_brain',
+
     # Persistence
     'BrainPersistence', 'AutoSaveMixin',
     'save_brain', 'load_brain', 'check_dill_available',

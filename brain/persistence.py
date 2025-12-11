@@ -251,6 +251,19 @@ class BrainPersistence:
                 'traits': dict(pers.traits) if hasattr(pers, 'traits') else {},
                 'chemical_history': list(pers.chemical_history) if hasattr(pers, 'chemical_history') else [],
             }
+
+        # Structural plasticity arrays (usage and ages)
+        try:
+            if hasattr(brain, 'cortex') and hasattr(brain.cortex, 'usage_counts'):
+                state['cortex_usage_counts'] = brain.cortex.usage_counts.tolist()
+            if hasattr(brain, 'cortex') and hasattr(brain.cortex, 'ages'):
+                state['cortex_ages'] = brain.cortex.ages.tolist()
+        except Exception:
+            pass
+
+        # Last dream summary
+        if hasattr(brain, 'last_dream_summary'):
+            state['last_dream_summary'] = brain.last_dream_summary
         
         return state
     
@@ -279,6 +292,24 @@ class BrainPersistence:
             brain.personality.baseline_shifts = dict(pers_data.get('baseline_shifts', {}))
             brain.personality.traits = dict(pers_data.get('traits', {}))
             brain.personality.chemical_history = list(pers_data.get('chemical_history', []))
+
+        # Restore cortex usage and ages if available
+        try:
+            if 'cortex_usage_counts' in state and hasattr(brain, 'cortex'):
+                arr = state['cortex_usage_counts']
+                brain.cortex.usage_counts = np.array(arr, dtype=int)
+            if 'cortex_ages' in state and hasattr(brain, 'cortex'):
+                arr = state['cortex_ages']
+                brain.cortex.ages = np.array(arr, dtype=int)
+        except Exception:
+            pass
+
+        # Restore last dream summary
+        if 'last_dream_summary' in state:
+            try:
+                brain.last_dream_summary = state['last_dream_summary']
+            except Exception:
+                pass
     
     def _rotate_backups(self, filepath: Path):
         """Rotate backup files."""

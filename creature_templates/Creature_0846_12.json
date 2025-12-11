@@ -1,0 +1,90 @@
+{
+  "name": "Creature_0846",
+  "phenotype": {
+    "size": 0.9063166359973001,
+    "hue": 0.12179850890281063,
+    "saturation": 0.8421616628736159,
+    "pattern_type": "solid",
+    "pattern_density": 0.8006454065499132,
+    "max_speed": 2.6976195665808067,
+    "jump_power": 11.761138643137501,
+    "metabolic_rate": 1.1350260544542365
+  },
+  "instincts": {
+    "flee_threat": {
+      "base_strength": 1.335605069148336,
+      "learned_weight": 1.0,
+      "threshold": 0.2
+    },
+    "avoid_hazard": {
+      "base_strength": 1.5,
+      "learned_weight": 1.0,
+      "threshold": 0.1
+    },
+    "seek_food": {
+      "base_strength": 1.4913781849694003,
+      "learned_weight": 1.0,
+      "threshold": 0.3
+    },
+    "seek_water": {
+      "base_strength": 1.0,
+      "learned_weight": 1.0,
+      "threshold": 0.3
+    },
+    "seek_shelter": {
+      "base_strength": 0.667802534574168,
+      "learned_weight": 1.0,
+      "threshold": 0.4
+    },
+    "seek_warmth": {
+      "base_strength": 1.0,
+      "learned_weight": 1.0,
+      "threshold": 0.3
+    },
+    "seek_cooling": {
+      "base_strength": 1.0,
+      "learned_weight": 1.0,
+      "threshold": 0.3
+    },
+    "approach_mate": {
+      "base_strength": 0.9985395671350632,
+      "learned_weight": 1.0,
+      "threshold": 0.5
+    },
+    "follow_same_species": {
+      "base_strength": 0.4963489178376578,
+      "learned_weight": 1.0,
+      "threshold": 0.4
+    },
+    "avoid_larger": {
+      "base_strength": 1.167802534574168,
+      "learned_weight": 1.0,
+      "threshold": 0.3
+    },
+    "explore_novel": {
+      "base_strength": 1.337920728442481,
+      "learned_weight": 1.0,
+      "threshold": 0.15
+    },
+    "seek_rest": {
+      "base_strength": 1.0,
+      "learned_weight": 1.0,
+      "threshold": 0.5
+    },
+    "seek_sleep": {
+      "base_strength": 1.2,
+      "learned_weight": 1.0,
+      "threshold": 0.4
+    },
+    "surface_breathe": {
+      "base_strength": 2.0,
+      "learned_weight": 1.0,
+      "threshold": 0.1
+    },
+    "freeze": {
+      "base_strength": 0.5,
+      "learned_weight": 1.0,
+      "threshold": 0.6
+    }
+  }
+}

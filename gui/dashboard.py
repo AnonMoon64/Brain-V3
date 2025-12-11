@@ -1,9 +1,11 @@
 """
-Chemical Brain Dashboard - PyQt6 GUI with three tabs
+Chemical Brain Dashboard - PyQt6 GUI with four tabs
 
 Tab 1: Chat - Interact with the brain
 Tab 2: Status - Real-time visualization of brain state
 Tab 3: Training - Use OpenAI to teach the brain
+Tab 4: Game - 2D world simulation with creatures
+Tab 5: Settings - Visual configuration for creatures
 """
 
 import os
@@ -21,11 +23,27 @@ from PyQt6.QtWidgets import (
     QFrame, QSplitter, QListWidget, QListWidgetItem
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread
-from PyQt6.QtGui import QFont, QColor, QPalette, QTextCursor
+from PyQt6.QtGui import QFont, QColor, QPalette, QTextCursor, QPainter, QPen, QBrush
 
 # Add parent to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from brain import IntegratedBrain, create_brain
+
+# Import game tab
+try:
+    from gui.game_tab import GameTab
+    _HAS_GAME_TAB = True
+except ImportError:
+    _HAS_GAME_TAB = False
+    GameTab = None
+
+# Import settings tab
+try:
+    from gui.settings_tab import SettingsTab
+    _HAS_SETTINGS_TAB = True
+except ImportError:
+    _HAS_SETTINGS_TAB = False
+    SettingsTab = None
 
 
 class TrainingWorker(QThread):
@@ -241,25 +259,27 @@ class ChatTab(QWidget):
 
         # Process through brain
         result = self.brain.process(text)
-        response = result['response']
-        mood = result['mood']
+        response = result.get('response', '')
+        mood = result.get('mood', 'neutral')
 
         self.append_message(f"Brain [{mood}]", response, "#81C784")
 
-        # Update status
-        stats = result['growth_stats']
+        # Update status safely (some brains may not include growth_stats)
+        stats = result.get('growth_stats', {}) or {}
         changes = []
-        if stats['neurons_born'] > 0:
-            changes.append(f"+{stats['neurons_born']} neurons")
-        if stats['neurons_died'] > 0:
-            changes.append(f"-{stats['neurons_died']} neurons")
-        if stats['synapses_formed'] > 0:
-            changes.append(f"+{stats['synapses_formed']} synapses")
+        if stats.get('neurons_born', 0) > 0:
+            changes.append(f"+{stats.get('neurons_born')} neurons")
+        if stats.get('neurons_died', 0) > 0:
+            changes.append(f"-{stats.get('neurons_died')} neurons")
+        if stats.get('synapses_formed', 0) > 0:
+            changes.append(f"+{stats.get('synapses_formed')} synapses")
 
         if changes:
             self.status_label.setText(f"Structure changed: {', '.join(changes)}")
         else:
-            self.status_label.setText(f"Mood: {mood} | Concepts: {', '.join(result['concepts_detected'][:3])}")
+            concepts = result.get('concepts_detected', []) or []
+            concepts_preview = ', '.join(concepts[:3]) if concepts else 'none'
+            self.status_label.setText(f"Mood: {mood} | Concepts: {concepts_preview}")
 
     def append_message(self, sender: str, text: str, color: str):
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -270,6 +290,72 @@ class ChatTab(QWidget):
     def append_system(self, text: str):
         html = f'<p style="color: #FFB74D; font-style: italic;">{text}</p>'
         self.chat_history.append(html)
+
+
+class BodyWidget(QWidget):
+    """Simple visualizer for the internal body state."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumSize(180, 160)
+        self.state = None
+
+    def set_state(self, state: dict):
+        self.state = state or {}
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        w = self.width()
+        h = self.height()
+        cx = w // 2
+        cy = h // 2 - 10
+
+        # Background
+        painter.fillRect(self.rect(), QColor('#1e1e1e'))
+
+        # Draw body core (energy-driven size)
+        energy = 1.0
+        if self.state:
+            energy = float(self.state.get('energy', 1.0))
+
+        radius = int(20 + 24 * energy)
+        core_color = QColor(int(120 + 120 * energy), int(120 + 100 * energy), int(140 + 60 * energy))
+        painter.setBrush(QBrush(core_color))
+        painter.setPen(QPen(QColor('#333')))
+        painter.drawEllipse(cx - radius//2, cy - radius//2, radius, radius)
+
+        # Draw muscles as horizontal bars at bottom
+        muscles = self.state.get('muscle_activation', []) if self.state else []
+        n = len(muscles)
+        if n > 0:
+            bar_w = int((self.width() - 40) / max(1, n))
+            for i, m in enumerate(muscles):
+                x = 20 + i * bar_w
+                y = self.height() - 56
+                val = int(120 + 120 * m)
+                col = QColor(val, int(100 * (1 - m)), int(180 * m))
+                painter.setBrush(QBrush(col))
+                painter.setPen(QPen(QColor('#222')))
+                painter.drawRect(x, y, max(2, int(bar_w * m)), 12)
+
+        # Energy bar
+        painter.setPen(QPen(QColor('#888')))
+        painter.drawText(8, 16, f"Energy: {energy:.2f}")
+        painter.setBrush(QBrush(QColor('#4CAF50')))
+        painter.drawRect(8, 22, int((self.width() - 16) * energy), 8)
+
+        # Reward bar
+        reward = float(self.state.get('reward', 0.0)) if self.state else 0.0
+        painter.setPen(QPen(QColor('#888')))
+        painter.drawText(8, 48, f"Reward: {reward:.2f}")
+        painter.setBrush(QBrush(QColor('#FF5722')))
+        rnorm = (reward + 1.0) / 2.0
+        painter.drawRect(8, 52, int((self.width() - 16) * max(0, min(1, rnorm))), 8)
+
+        painter.end()
 
 
 class StatusTab(QWidget):
@@ -352,7 +438,14 @@ class StatusTab(QWidget):
         self.training_label = QLabel("Training samples: 0")
         mood_layout.addWidget(self.training_label)
 
+        self.dream_label = QLabel("Dreams: none")
+        mood_layout.addWidget(self.dream_label)
+
         left_layout.addWidget(mood_group)
+        # Body visualizer
+        self.body_widget = BodyWidget()
+        left_layout.addWidget(self.body_widget)
+
         left_layout.addStretch()
 
         # Right column - Network and Memory
@@ -466,6 +559,19 @@ class StatusTab(QWidget):
         # Update stats
         self.interactions_label.setText(f"Interactions: {data['interactions']}")
         self.training_label.setText(f"Training samples: {data['training_count']}")
+        # Dream summary
+        dream = data.get('dream_summary', {})
+        if dream:
+            ds = []
+            if dream.get('replayed', 0):
+                ds.append(f"replayed:{dream.get('replayed')}")
+            if dream.get('imagined', 0):
+                ds.append(f"imagined:{dream.get('imagined')}")
+            if dream.get('rewired', 0):
+                ds.append(f"rewired:{dream.get('rewired')}")
+            self.dream_label.setText("Dreams: " + ", ".join(ds))
+        else:
+            self.dream_label.setText("Dreams: none")
 
         neurons = data.get('neurons', {})
         self.neurons_label.setText(f"Neurons: {neurons.get('hidden', neurons.get('total', 0))}")
@@ -487,6 +593,14 @@ class StatusTab(QWidget):
         for param, bar in self.learning_bars.items():
             value = learning.get(param, 0)
             bar.setValue(int(min(1.0, value) * 100))
+
+        # Update body visualizer
+        try:
+            body_state = data.get('body', {})
+            if hasattr(self, 'body_widget'):
+                self.body_widget.set_state(body_state)
+        except Exception:
+            pass
 
 
 class TrainingTab(QWidget):
@@ -848,10 +962,27 @@ class ChemicalBrainDashboard(QMainWindow):
 
         # Tab widget
         tabs = QTabWidget()
-        tabs.addTab(ChatTab(self.brain), "Chat")
-        tabs.addTab(StatusTab(self.brain), "Status")
+        tabs.addTab(ChatTab(self.brain), "💬 Chat")
+        tabs.addTab(StatusTab(self.brain), "📊 Status")
         self.training_tab = TrainingTab(self.brain, self.config)
-        tabs.addTab(self.training_tab, "Training")
+        tabs.addTab(self.training_tab, "🎓 Training")
+        
+        # Game tab (if available)
+        if _HAS_GAME_TAB and GameTab is not None:
+            self.game_tab = GameTab(self.brain)
+            tabs.addTab(self.game_tab, "🎮 Game")
+        
+        # Settings tab (if available)
+        if _HAS_SETTINGS_TAB and SettingsTab is not None:
+            self.settings_tab = SettingsTab()
+            tabs.addTab(self.settings_tab, "⚙️ Settings")
+            # Connect settings to game tab
+            if hasattr(self, 'game_tab'):
+                self.settings_tab.settings_changed.connect(
+                    lambda: self.game_tab.update_visual_config(self.settings_tab.get_config())
+                )
+                # Also set initial config NOW
+                self.game_tab.update_visual_config(self.settings_tab.get_config())
 
         layout.addWidget(tabs)
 

@@ -8,7 +8,7 @@ This is a proof-of-concept chatbot that demonstrates:
 - Memories tied to chemical states
 - Emergent responses from structure
 
-Now using IntegratedBrain with all 10 mouse-level complexity features!
+Now using ThreeSystemBrain - the concentrated intelligence architecture!
 
 Run with: python chatbot.py
 """
@@ -21,7 +21,7 @@ from typing import Optional
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from brain import create_brain, IntegratedBrain
+from brain import create_brain, ThreeSystemBrain
 
 
 class Colors:
@@ -68,12 +68,12 @@ def colorize_level(value: float) -> str:
         return Colors.CYAN
 
 
-def print_dashboard(brain: IntegratedBrain) -> None:
+def print_dashboard(brain: ThreeSystemBrain) -> None:
     """Print the brain status dashboard"""
     data = brain.get_dashboard_data()
 
     print(f"\n{Colors.BOLD}{'=' * 60}{Colors.RESET}")
-    print(f"{Colors.BOLD}{Colors.CYAN}  INTEGRATED BRAIN STATUS (Mouse-Level Complexity){Colors.RESET}")
+    print(f"{Colors.BOLD}{Colors.CYAN}  THREE-SYSTEM BRAIN STATUS{Colors.RESET}")
     print(f"{Colors.BOLD}{'=' * 60}{Colors.RESET}\n")
 
     # Mood
@@ -182,13 +182,12 @@ def main():
 {Colors.BOLD}{Colors.CYAN}
 +===========================================================+
 |                                                           |
-|   INTEGRATED BRAIN CHATBOT                                |
+|   THREE-SYSTEM BRAIN CHATBOT                              |
 |                                                           |
-|   Mouse-Level Complexity with 10 Advanced Features:       |
-|   - Kinetic Neuromodulation  - Cortical Columns           |
-|   - Neuron Metabolism        - Sparse Networks            |
-|   - Reservoir Computing      - Hierarchical Time          |
-|   - Language Decoder         - Word Invention             |
+|   Concentrated Intelligence Architecture:                 |
+|   - System 1: Sparse Cortical Engine                      |
+|   - System 2: Dynamic Recurrent Core                      |
+|   - System 3: Neuromodulated Learning                     |
 |                                                           |
 +===========================================================+
 {Colors.RESET}
@@ -199,7 +198,7 @@ Type {Colors.CYAN}/help{Colors.RESET} for commands, or just start chatting!
     print(f"{Colors.DIM}Initializing brain...{Colors.RESET}")
     brain = create_brain('small', use_gpu=False)
     total_neurons = brain.config.total_neurons()
-    print(f"{Colors.DIM}Brain ready with {total_neurons:,} neurons across {len(brain.regions)} regions.{Colors.RESET}\n")
+    print(f"{Colors.DIM}Brain ready with {total_neurons:,} neurons.{Colors.RESET}\n")
 
     while True:
         try:

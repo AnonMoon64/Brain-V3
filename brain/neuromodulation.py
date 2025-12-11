@@ -1124,18 +1124,27 @@ class ThreeFactorSTDP:
         - Serotonin promotes stability
         - Acetylcholine enhances attention-driven learning
         - Norepinephrine enhances consolidation
+        - Cortisol gates LTD (pain/stress creates aversive memory)
         - cAMP is the final effector
         """
         dopamine = modulators.get(ModulatorType.DOPAMINE, 0.5)
         serotonin = modulators.get(ModulatorType.SEROTONIN, 0.5)
         acetylcholine = modulators.get(ModulatorType.ACETYLCHOLINE, 0.5)
         norepinephrine = modulators.get(ModulatorType.NOREPINEPHRINE, 0.5)
+        cortisol = modulators.get(ModulatorType.CORTISOL, 0.3)
         
         # Dopamine effect (reward signal)
         # High dopamine: boost LTP, suppress LTD
         # Low dopamine: suppress LTP, boost LTD
         dopamine_effect_ltp = dopamine * self.dopamine_ltp_boost
         dopamine_effect_ltd = (1.0 - dopamine) * self.dopamine_ltd_suppress + dopamine * 0.3
+        
+        # CORTISOL EFFECT (pain/stress signal) - THIS IS THE KEY FOR AVERSIVE LEARNING
+        # High cortisol: BOOST LTD (weaken synapses active during pain = "fire bad")
+        # High cortisol: SUPPRESS LTP (don't reinforce painful behaviors)
+        # This creates structural memory of "things that hurt me"
+        cortisol_ltp_suppress = max(0.2, 1.0 - cortisol * 1.5)  # Suppress LTP when stressed
+        cortisol_ltd_boost = 1.0 + cortisol * 2.0  # Boost LTD when stressed (weaken bad connections)
         
         # Acetylcholine effect (attention)
         ach_effect = 0.5 + acetylcholine * self.acetylcholine_attention
@@ -1149,9 +1158,11 @@ class ThreeFactorSTDP:
         # cAMP is the final common pathway
         camp_effect = 0.5 + camp_level
         
-        # Compute final weight change
-        ltp_change = ltp_eligibility * dopamine_effect_ltp * ach_effect * camp_effect * metaplasticity
-        ltd_change = ltd_eligibility * dopamine_effect_ltd * camp_effect * metaplasticity
+        # Compute final weight change with cortisol modulation
+        # LTP (strengthening) is suppressed by cortisol
+        ltp_change = ltp_eligibility * dopamine_effect_ltp * ach_effect * camp_effect * metaplasticity * cortisol_ltp_suppress
+        # LTD (weakening) is boosted by cortisol - this is how "fire = bad" is learned!
+        ltd_change = ltd_eligibility * dopamine_effect_ltd * camp_effect * metaplasticity * cortisol_ltd_boost
         
         # Serotonin modulates the total magnitude
         total_change = (ltp_change - ltd_change) * serotonin_stability * ne_effect

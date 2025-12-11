@@ -1,22 +1,37 @@
-# Brain-V2: Chemical Brain Chatbot 🧠🧪
+# Brain-V3: Chemical Brain with Emergent Life Simulation 🧠🧪🦎
 
-A proof-of-concept chatbot where **memory IS architecture**. This isn't a traditional chatbot with text logs - each conversation physically changes the neural structure through simulated neurochemistry.
+A biologically-inspired neural architecture where **memory IS structure**. This isn't a traditional AI with separate memory stores — the network topology itself encodes experience. Includes a complete creature simulation with DNA/RNA genetics, instincts, breeding, and evolution.
 
-## The Core Idea
+## The Core Philosophy
 
-> Knowledge and memory is woven into the architecture itself. Your neurons *are* your memories.
+> **Structure IS Memory. Chemistry IS Mood. Behavior IS Emergent.**
 
-Traditional AI approach:
-- Fixed architecture → train weights
+- No hardcoded responses or templates
+- No separate memory database
+- No traditional training loops
+- Behavior emerges from neural dynamics + neurochemistry + structural plasticity
 
-**Our approach:**
-- Minimal starting structure → grows based on interaction → chemistry influences which neurons form and which die → emergent learning
+## 🧬 Two Modes of Operation
 
-## How It Works
+### 1. Chatbot Mode (CLI)
+Interactive conversation with a brain that grows and changes structure based on interaction.
 
-### 🧪 Simulated Neurochemicals
+```powershell
+python chatbot.py
+```
 
-Seven chemicals influence brain behavior:
+### 2. Life Simulation Mode (GUI)
+Watch creatures with DNA-derived brains navigate a 2D world, eat, breed, sleep, and evolve.
+
+```powershell
+python run_dashboard.py
+```
+
+---
+
+## 🧪 Neurochemical System
+
+Ten neurochemicals modulate all brain behavior:
 
 | Chemical | Effect |
 |----------|--------|
@@ -27,195 +42,363 @@ Seven chemicals influence brain behavior:
 | **Norepinephrine** | Alertness, attention, novelty detection |
 | **GABA** | Inhibition, calm, noise reduction |
 | **Glutamate** | Excitation, new connections, learning speed |
+| **Acetylcholine** | Attention, memory formation |
+| **Endorphin** | Pain modulation, reward boost |
+| **Adrenaline** | Arousal, fight/flight responses |
 
-Different chemical cocktails create different "moods":
-- High dopamine + low cortisol = **Curious, exploratory**
-- High cortisol + high norepinephrine = **Alert, defensive**
-- High serotonin + high GABA = **Calm, consolidating**
-- High oxytocin + high dopamine = **Bonding, trusting**
+### Chemical Cocktails Create Moods
 
-### 🔮 Dynamic Neural Network
+- **High dopamine + low cortisol** → Curious, exploratory
+- **High cortisol + norepinephrine** → Alert, defensive  
+- **High serotonin + GABA** → Calm, consolidating
+- **High oxytocin + dopamine** → Bonding, trusting
 
-The neural network grows and prunes itself:
+---
 
-- **Neurons spawn** when encountering novel patterns
-- **Neurons die** when unused or causing conflict
-- **Synapses strengthen** with use (Hebbian: "neurons that fire together wire together")
-- **Synapses weaken** without use
-- **Chemical state influences** growth rate, pruning rate, and plasticity
+## 🏗️ Three-System Brain Architecture
 
-### 💭 Chemical Memory
+The brain is organized into three interacting subsystems:
 
-Memories aren't stored as text - they're patterns of neural activation:
+### System 1: Sparse Cortical Engine
+- HTM-like sparse distributed representations (SDR)
+- K-winners-take-all (~2% sparsity like real cortex)
+- Cortical minicolumns with lateral inhibition
+- Predictive coding with feedforward/feedback paths
 
-- Chemical state at encoding affects memory strength
-- Emotional memories (high chemical activity) are stronger
-- Retrieval is mood-congruent (current chemicals affect what surfaces)
-- Memories decay if not recalled, consolidate if reinforced
+### System 2: Dynamic Recurrent Core  
+- Reservoir computing (Echo State Networks)
+- Working memory and temporal sequences
+- Multi-rate simulation for different time scales
+- The "temporal glue" for sequence processing
 
-## Running the Chatbot
+### System 3: Neuromodulated Learning
+- Kinetic receptor binding with stochastic dynamics
+- Three-factor learning: pre × post × neuromodulator
+- Cross-modulator antagonism (DA-5HT, NE-ACh)
+- Epigenetic switches gate learning modes
 
-```bash
-# No dependencies required - pure Python!
-python chatbot.py
+---
+
+## 🦎 Creature Simulation System
+
+### DNA/RNA Genetics
+- **60+ genes** controlling brain size, body shape, metabolism, behavior
+- **Dominance patterns**: Complete, incomplete, codominant
+- **RNA expression** with tissue-specific transcription
+- **Developmental stages**: Embryo → Larva → Juvenile → Adult → Elder
+- **Epigenetic marks** that can be inherited
+
+### Phenotype Expression
+```python
+from brain import Genome, EmbodiedBrain
+
+# Create a random genome
+genome = Genome.random()
+
+# Develop a creature with brain from DNA
+creature = EmbodiedBrain.from_genome(genome)
+
+# Phenotype varies: limbs, size, metabolism, brain architecture
+print(f"Limbs: {creature.body.phenotype.num_limbs}")
+print(f"Brain columns: {creature.brain.config.num_columns}")
 ```
 
-### Commands
+### Instinct System with Arbitration
+Eight core instincts compete for behavioral control:
 
-| Command | Description |
-|---------|-------------|
-| `/status` | Show brain dashboard (chemicals, neurons, memory) |
-| `/introspect` | Have the brain describe its own state |
-| `/chemicals` | Show chemical levels |
-| `/memory` | Show memory statistics |
-| `/network` | Show neural network statistics |
-| `/clear` | Clear the screen |
-| `/help` | Show help |
-| `/quit` | Exit |
+| Instinct | Drive | Behavior |
+|----------|-------|----------|
+| **Hunger** | Energy deficit | Seek and consume food |
+| **Thirst** | Hydration need | Find water |
+| **Fear** | Threat detection | Flee from hazards |
+| **Exploration** | Novelty seeking | Move and discover |
+| **Social** | Proximity to others | Approach creatures |
+| **Mating** | Reproductive drive | Find compatible mates |
+| **Rest** | Fatigue | Sleep and dream |
+| **Surface** | Oxygen need | Surface when drowning |
 
-### Example Session
+**Instinct Arbitration**: When instincts conflict, inhibition rules resolve them:
+- Fear inhibits exploration (safety first)
+- Hunger suppresses mating (survive before reproduce)
+- Drowning overrides everything (emergency surface)
 
+### Motor Constraints from Phenotype
+Actions are gated by physical capability:
+- **0 limbs (snake)**: Cannot walk or jump, can only slither
+- **Has fins**: Can swim efficiently
+- **Has wings**: Can fly
+- **Body size**: Affects jump height and speed
+
+### World Simulation
+- **Procedural terrain**: Ground, platforms, water, hazards, shelters
+- **Day/night cycle**: Affects light, temperature, creature behavior
+- **Weather system**: Clear, rain, storm conditions
+- **Food spawning**: Plants and meat with spoilage
+- **Edge detection**: Creatures sense cliffs and avoid fatal drops
+
+### Breeding System
+```python
+from brain import create_offspring, calculate_mate_compatibility
+
+# Check compatibility (genes, species distance)
+score = calculate_mate_compatibility(parent1, parent2)
+
+# Create offspring with genetic crossover + mutation
+child_genome = create_offspring(parent1.genome, parent2.genome)
 ```
-You: Hello! I'm excited to meet you!
-Brain: That's fascinating This is activating many patterns in me. I feel rewarded by this interaction.
-  [Structure changed: +1 neurons, +15 synapses]
-  [Concepts: hello, excited, meet]
 
-You: /status
-═════════════════════════════════════════════════════════
-  🧠 CHEMICAL BRAIN STATUS
-═════════════════════════════════════════════════════════
+---
 
-  Mood: EXCITED
+## 🦠 Biological Systems
 
-  Neurochemicals:
-    Dopamine     [███████████░░░░] 0.78
-    Serotonin    [█████████░░░░░░] 0.62
-    ...
+### Viral Infections
+Viruses can infect creatures and modify gene expression:
+```python
+from brain import Virus, Infection, ImmuneSystem, COMMON_VIRUSES
+
+# Infect a creature
+infection = Infection(COMMON_VIRUSES['neural_virus'])
+creature.infections.append(infection)
+
+# Immune system fights back
+immune = ImmuneSystem()
+immune.respond(creature, infection)
 ```
 
-## Architecture
+### Microbiome (Gut-Brain Axis)
+Gut bacteria affect mood and metabolism:
+```python
+from brain import Microbiome, PROBIOTIC_STRAINS
+
+microbiome = Microbiome()
+microbiome.add_strain(PROBIOTIC_STRAINS['serotonin_producer'])
+
+# Effects on creature
+mood_modifier = microbiome.get_serotonin_production()
+metabolism_boost = microbiome.get_metabolism_effect()
+```
+
+### Cultural Transmission
+Creatures can learn behaviors by observing others:
+```python
+from brain import CulturalMemory, LearnedBehavior, BehaviorType
+
+culture = CulturalMemory(learning_rate=0.3)
+
+# Observe another creature's successful foraging
+culture.observe(
+    performer_id="creature_42",
+    behavior=LearnedBehavior(
+        id="efficient_foraging",
+        behavior_type=BehaviorType.FORAGING,
+        action_biases={'move_to_food': 0.8}
+    ),
+    observed_reward=0.9
+)
+```
+
+### Cross-Simulation Migration
+Export creatures to share between simulations:
+```python
+from brain import save_creature_to_file, load_creature_from_file
+
+# Export a creature
+save_creature_to_file(creature, "my_creature.brain")
+
+# Import in another simulation
+imported = load_creature_from_file("my_creature.brain")
+```
+
+---
+
+## 📁 Project Structure
 
 ```
 brain/
-├── __init__.py              # Package exports
-├── brain.py                 # ChemicalBrain - original chatbot brain
-├── chemicals.py             # ChemicalSystem - 7 neurochemicals
-├── neurons.py               # SpikingNeuralNetwork - dynamic growth/pruning
+├── __init__.py               # Package exports (all public API)
+├── three_system_brain.py     # PRIMARY: ThreeSystemBrain + 3 subsystems
+├── neuromodulation.py        # 10 neurochemicals, kinetic binding
+├── language_decoder.py       # Attractor dynamics → text output
+├── signal_processing.py      # Input normalization pipeline
+├── hierarchical_time.py      # Multi-rate oscillations
+├── persistence.py            # Save/load with dill
 │
-│ # === MOUSE-LEVEL COMPLEXITY EXTENSIONS ===
+│ # Genetics & Development
+├── dna.py                    # Genome, genes, crossover, mutation
+├── rna.py                    # RNA expression, viruses, immune system
 │
-├── integrated_brain.py      # IntegratedBrain - unified advanced system
-├── neuromodulation.py       # Kinetic receptor binding, three-factor learning
-├── cortical_architecture.py # Hierarchical cortex with minicolumns
-├── metabolism.py            # Per-neuron ATP, homeostatic plasticity
-├── signal_processing.py     # Robust normalization, noise handling
-├── language_decoder.py      # Semantic space, attractor dynamics
-├── sparse_network.py        # K-winners-take-all, event-driven sim
-├── gpu_acceleration.py      # Quantized arrays, vectorized ops
-├── reservoir.py             # Echo State Networks, Liquid State Machines
-└── hierarchical_time.py     # Multi-rate simulation, nested oscillations
+│ # Creature Simulation
+├── world.py                  # 2D environment, terrain, weather
+├── creature.py               # Physical body, phenotype, homeostasis
+├── instincts.py              # Instinct system with arbitration
+├── breeding.py               # Reproduction, epigenetics
+├── embodiment.py             # Brain↔body wiring, sensory encoding
+│
+│ # Extended Biology
+├── culture.py                # Cultural transmission, social learning
+├── microbiome.py             # Gut-brain axis, bacteria
+├── migration.py              # Cross-simulation creature transfer
+│
+│ # Optional/Advanced
+├── cortical_architecture.py  # Extended cortical layers
+├── metabolism.py             # Per-neuron ATP, homeostasis
+├── sparse_network.py         # Sparse containers
+├── reservoir.py              # Echo State Networks
+└── gpu_acceleration.py       # Vectorized operations
 
-chatbot.py                   # Interactive CLI with dashboard
-run_dashboard.py             # GUI dashboard
+gui/
+├── __init__.py
+└── dashboard.py              # PyQt6 GUI with game simulation
+
+chatbot.py                    # CLI chatbot interface
+run_dashboard.py              # GUI launcher
 ```
 
-## 🐭 Mouse-Level Complexity Extensions
+---
 
-The Brain-V2 now includes advanced systems targeting biological mouse-level complexity:
+## 🚀 Quick Start
 
-### Kinetic Neuromodulation (`neuromodulation.py`)
-- **Receptor binding kinetics**: Michaelis-Menten dynamics for D1/D2 dopamine, alpha/beta adrenergic, muscarinic, 5-HT receptors
-- **Three-factor learning**: Weight changes depend on pre-synaptic, post-synaptic, AND neuromodulator levels
-- **Second messenger cascades**: cAMP, PKA, MAPK pathways
-- **Metaplasticity**: The plasticity rules themselves change based on history
+### Prerequisites
+- Python 3.10+
+- NumPy (core dependency)
+- PyQt6 (optional, for GUI)
+- dill (optional, for full state persistence)
 
-### Hierarchical Cortical Architecture (`cortical_architecture.py`)
-- **6-layer cortical structure**: L1 (input), L2/3 (lateral), L4 (thalamic input), L5 (output), L6 (feedback)
-- **Minicolumns**: ~100 neurons per functional unit
-- **Topographic mapping**: Preserved spatial relationships
-- **Lateral inhibition**: Mexican-hat connectivity pattern
+### Installation
+```powershell
+cd Brain-V3
+pip install -r requirements.txt
+```
 
-### Neuron-Specific Metabolism (`metabolism.py`)
-- **Per-neuron ATP**: Mitochondrial dynamics, oxidative stress
-- **Synaptic scaling**: Homeostatic up/down regulation
-- **Intrinsic plasticity**: Threshold adaptation to maintain target rates
-- **Astrocyte support**: Metabolic coupling between glia and neurons
+### CLI Chatbot
+```powershell
+python chatbot.py
+```
 
-### Sparse Representations (`sparse_network.py`)
-- **K-winners-take-all**: Only 2% of neurons active (like cortex)
-- **Event-driven simulation**: Update only active neurons
-- **Sparse Distributed Memory**: Content-addressable storage
+### GUI Dashboard
+```powershell
+python run_dashboard.py
+```
 
-### Reservoir Computing (`reservoir.py`)
-- **Echo State Networks**: Fixed random recurrent layer, trainable readout
-- **Liquid State Machines**: Spiking reservoir for temporal patterns
-- **Hybrid reservoirs**: Fast (ESN) + slow (LSM) dynamics
-
-### Hierarchical Time Scales (`hierarchical_time.py`)
-- **Multi-rate simulation**: Sensory at 1000Hz, association at 100Hz, memory at 1Hz
-- **Nested oscillations**: Gamma (40Hz) nested in theta (6Hz)
-- **Cross-frequency coupling**: Phase-amplitude modulation
-
-### Using the Advanced Brain
-
+### Programmatic Usage
 ```python
-from brain import IntegratedBrain, create_brain
+from brain import create_brain, World, EmbodiedBrain, Genome
 
-# Create brain with preset scale
-brain = create_brain(scale="small", use_gpu=False)
+# Create a brain directly
+brain = create_brain(scale='micro')  # micro/small/medium/large
+result = brain.process('Hello!', reward=0.5, arousal=0.3)
+print(result['response'])
+print(result['mood'])
 
-# Process input
-response = brain.process_input(
-    "Hello, how are you?",
-    reward=0.5,      # Positive feedback
-    arousal=0.6      # Moderate attention
-)
+# Create a DNA-derived creature
+genome = Genome.random()
+creature = EmbodiedBrain.from_genome(genome)
 
-# Get detailed stats
-stats = brain.get_stats()
-print(f"Active neurons: {stats['global_activity']:.3f}")
-print(f"Dopamine level: {stats['neuromodulation']['dopamine']:.3f}")
+# Create a world
+world = World(width=800, height=600)
 ```
 
-## Key Questions We're Exploring
+---
 
-1. **When does a new neuron spawn?**
-   - When the system encounters something it can't handle?
-   - When a chemical threshold hits?
-   - Random but biased?
+## 🎮 Dashboard Commands
 
-2. **When do neurons die?**
-   - Unused ones?
-   - Ones that cause conflict?
-   - Based on chemical state?
+| Command | Description |
+|---------|-------------|
+| `/status` | Full brain dashboard |
+| `/chemicals` | Neuromodulator levels |
+| `/stats` | Detailed statistics |
+| `/regions` | Brain region activity |
+| `/introspect` | Brain describes its own state |
+| `/save` | Save brain state |
+| `/clear` | Clear screen |
+| `/help` | Show help |
+| `/quit` | Exit |
 
-3. **How do chemicals affect learning?**
-   - "Anger" (high cortisol) = more aggressive pruning
-   - "Calm" (high serotonin) = reinforce existing patterns
-   - Different chemical states = different learning modes
+---
 
-## What Makes This Unique
+## 🔬 Advanced Features
 
-1. **Structure IS Memory**: No separate memory store. The network topology encodes experience.
+### Self-Compression Engine
+The cortex invents new columns to represent recurring patterns. Reservoir discovers dynamical modes through SVD for efficient representation.
 
-2. **Chemical Modulation**: Learning isn't fixed - it changes based on emotional state.
+### Internal Body / Motor Loop
+8 virtual "muscles" with activation, fatigue, and recovery. Proprioceptive feedback creates perception-action loops.
 
-3. **Emergent Behavior**: Responses emerge from the dynamic structure, not templates.
+### Global Event Queue
+Single priority queue replaces separate temporal layers. Events: gamma (fast), beta, theta, delta (slow), modulator.
 
-4. **Visible Evolution**: Watch the brain develop through the dashboard.
+### LSH Hash Lattice
+Locality-sensitive hashing for O(1) pattern lookup vs O(n) exhaustive search.
 
-5. **Biologically Inspired**: Modernizing old-school neural concepts with chemical simulation.
+### Signal Processing Pipeline
+Robust input normalization with outlier handling, noise injection for regularization.
 
-## Future Directions
+---
 
-- More sophisticated neuron spawning rules
-- Inter-neuron competition for survival
-- Sleep/consolidation cycles
-- Longer-term personality emergence
-- Visual network graph
-- Persistent brain state (save/load)
+## 🔮 Future Work
+
+### Cross-System Brain Consolidation
+Major architectural refactor to further unify the three brain systems into a more tightly integrated whole. This would enable:
+- Seamless information flow between cortex, reservoir, and learning systems
+- Unified plasticity rules across all components
+- Better emergent dynamics from system interactions
+
+### Other Research Directions
+- Sleep/consolidation cycles with offline replay
+- Multi-agent brain communication
+- Visual network graph visualization
+- Persistent personality emergence over long timescales
+- More sophisticated neuron spawning heuristics
+
+---
+
+## 🧪 Testing
+
+```powershell
+# Quick import test
+python -c "from brain import create_brain; b = create_brain('micro'); print('OK')"
+
+# Run test suite
+python tests/run_tests.py
+
+# Or with pytest
+pip install pytest
+pytest -q
+```
+
+---
+
+## 📊 Brain Scales
+
+| Scale | Cortical Columns | Reservoir Size | Use Case |
+|-------|------------------|----------------|----------|
+| `micro` | ~200 | ~800 | Quick testing |
+| `small` | ~400 | ~1600 | Development |
+| `medium` | ~800 | ~3200 | Normal use |
+| `large` | ~2000 | ~8000 | Complex tasks |
+
+---
+
+## 🧠 Key Principles
+
+1. **Structure IS Memory**: No separate memory store. Network topology encodes experience.
+
+2. **Chemical Modulation First**: All behavior influenced by 10 neurochemicals.
+
+3. **Emergent > Hardcoded**: No templates. Behavior emerges from dynamics.
+
+4. **Three-Factor Learning**: pre × post × neuromodulator influences all plasticity.
+
+5. **Biological Plausibility**: Inspired by real neuroscience, not just metaphors.
+
+---
+
+## 📜 License
+
+MIT License - See LICENSE file for details.
 
 ---
 
 *"The chat interface is just what emerges from that growing structure."*
+
+*"Memory IS architecture. Chemistry IS mood. Behavior IS emergent."*

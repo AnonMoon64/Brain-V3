@@ -1,0 +1,586 @@
+{
+  "background_path": "c:\\Users\\atomi\\Downloads\\Brain-V3\\images\\BackgroundForest.png",
+  "body_parts": {
+    "full_body": {
+      "baby": {
+        "part": "full_body",
+        "stage": "baby",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 0,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "juvenile": {
+        "part": "full_body",
+        "stage": "juvenile",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 0,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "adult": {
+        "part": "full_body",
+        "stage": "adult",
+        "image_paths": [
+          "C:/Users/atomi/Downloads/Brain-V3/images/fullbody.png"
+        ],
+        "dna_gene": "pattern_type",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 0.2,
+        "z_order": 0,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "elder": {
+        "part": "full_body",
+        "stage": "elder",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 0,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      }
+    },
+    "head": {
+      "baby": {
+        "part": "head",
+        "stage": "baby",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 3,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "juvenile": {
+        "part": "head",
+        "stage": "juvenile",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 3,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "adult": {
+        "part": "head",
+        "stage": "adult",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 3,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "elder": {
+        "part": "head",
+        "stage": "elder",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 3,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      }
+    },
+    "torso": {
+      "baby": {
+        "part": "torso",
+        "stage": "baby",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 0,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "juvenile": {
+        "part": "torso",
+        "stage": "juvenile",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 0,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "adult": {
+        "part": "torso",
+        "stage": "adult",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 0,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "elder": {
+        "part": "torso",
+        "stage": "elder",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 0,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      }
+    },
+    "left_arm": {
+      "baby": {
+        "part": "left_arm",
+        "stage": "baby",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 2,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "juvenile": {
+        "part": "left_arm",
+        "stage": "juvenile",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 2,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "adult": {
+        "part": "left_arm",
+        "stage": "adult",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 2,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "elder": {
+        "part": "left_arm",
+        "stage": "elder",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 2,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      }
+    },
+    "right_arm": {
+      "baby": {
+        "part": "right_arm",
+        "stage": "baby",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 2,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "juvenile": {
+        "part": "right_arm",
+        "stage": "juvenile",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 2,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "adult": {
+        "part": "right_arm",
+        "stage": "adult",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 2,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "elder": {
+        "part": "right_arm",
+        "stage": "elder",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 2,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      }
+    },
+    "left_leg": {
+      "baby": {
+        "part": "left_leg",
+        "stage": "baby",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 1,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "juvenile": {
+        "part": "left_leg",
+        "stage": "juvenile",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 1,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "adult": {
+        "part": "left_leg",
+        "stage": "adult",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 1,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "elder": {
+        "part": "left_leg",
+        "stage": "elder",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 1,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      }
+    },
+    "right_leg": {
+      "baby": {
+        "part": "right_leg",
+        "stage": "baby",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 1,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "juvenile": {
+        "part": "right_leg",
+        "stage": "juvenile",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 1,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "adult": {
+        "part": "right_leg",
+        "stage": "adult",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 1,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "elder": {
+        "part": "right_leg",
+        "stage": "elder",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 1,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      }
+    },
+    "tail": {
+      "baby": {
+        "part": "tail",
+        "stage": "baby",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": -1,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "juvenile": {
+        "part": "tail",
+        "stage": "juvenile",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": -1,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "adult": {
+        "part": "tail",
+        "stage": "adult",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": -1,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "elder": {
+        "part": "tail",
+        "stage": "elder",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": -1,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      }
+    },
+    "eyes": {
+      "baby": {
+        "part": "eyes",
+        "stage": "baby",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 4,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "juvenile": {
+        "part": "eyes",
+        "stage": "juvenile",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 4,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "adult": {
+        "part": "eyes",
+        "stage": "adult",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 4,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "elder": {
+        "part": "eyes",
+        "stage": "elder",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 4,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      }
+    },
+    "mouth": {
+      "baby": {
+        "part": "mouth",
+        "stage": "baby",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 4,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "juvenile": {
+        "part": "mouth",
+        "stage": "juvenile",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 4,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "adult": {
+        "part": "mouth",
+        "stage": "adult",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 4,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      },
+      "elder": {
+        "part": "mouth",
+        "stage": "elder",
+        "image_paths": [],
+        "dna_gene": "color_hue",
+        "offset_x": 0,
+        "offset_y": 0,
+        "scale": 1.0,
+        "z_order": 4,
+        "apply_hue": true,
+        "apply_saturation": true,
+        "apply_brightness": true
+      }
+    }
+  },
+  "world_objects": {
+    "water": {
+      "object_type": "water",
+      "image_paths": [
+        "C:/Users/atomi/Downloads/Brain-V3/images/pond.png"
+      ],
+      "tile_mode": false,
+      "animation_speed": 0.2,
+      "scale": 1.0
+    },
+    "hazard": {
+      "object_type": "hazard",
+      "image_paths": [],
+      "tile_mode": true,
+      "animation_speed": 0.2,
+      "scale": 1.0
+    },
+    "food": {
+      "object_type": "food",
+      "image_paths": [],
+      "tile_mode": true,
+      "animation_speed": 0.2,
+      "scale": 1.0
+    },
+    "ground": {
+      "object_type": "ground",
+      "image_paths": [],
+      "tile_mode": true,
+      "animation_speed": 0.2,
+      "scale": 1.0
+    },
+    "shelter": {
+      "object_type": "shelter",
+      "image_paths": [],
+      "tile_mode": true,
+      "animation_speed": 0.2,
+      "scale": 1.0
+    }
+  }
+}

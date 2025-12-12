@@ -29,6 +29,13 @@ class BehaviorState(Enum):
     RESTING = auto()        # Recovering energy
     SLEEPING = auto()       # Deep rest, minimal awareness
     SOCIALIZING = auto()    # Interacting with others
+    # TIER 4: Tool Use States
+    SEEKING_TOOL = auto()   # Moving toward a tool
+    PICKING_UP = auto()     # Grasping an object
+    CARRYING = auto()       # Holding a tool, can do other things
+    DROPPING = auto()       # Releasing held object
+    THROWING = auto()       # Hurling held object
+    USING_TOOL = auto()     # Using tool for a purpose (digging, reaching, breaking)
     
 
 @dataclass
@@ -112,6 +119,10 @@ class BehaviorStateMachine:
     # Lateral bias (-1 to 1, breaks symmetry)
     lateral_bias: float = field(default_factory=lambda: np.random.uniform(-0.3, 0.3))
     
+    # Wander state
+    wander_timer: float = 0.0
+    wander_direction: float = 0.0
+    
     # Evidence accumulators (require sustained signal to trigger)
     food_evidence: float = 0.0
     water_evidence: float = 0.0
@@ -120,11 +131,21 @@ class BehaviorStateMachine:
     
     # Evidence thresholds (lowered for faster reactions)
     evidence_threshold: float = 0.3
-    evidence_decay: float = 0.92  # Faster decay = quicker response
+    evidence_decay: float = 0.85  # Faster decay = quicker calming down
+    
+    # Flee timeout - max time to flee before forced rest
+    flee_timer: float = 0.0
+    max_flee_duration: float = 3.0  # Stop fleeing after 3 seconds max
     
     # Last successful action direction (reinforcement)
     last_successful_direction: float = 0.0
     success_memory: float = 0.0  # Decays over time
+    
+    # UPGRADE 9: Behavioral Persistence (Hysteresis + Switching Costs)
+    last_state_change_time: float = 0.0      # When did we last switch states?
+    state_switch_cooldown: float = 0.5       # Minimum seconds between switches
+    task_switch_cost: float = 0.1            # Energy cost to change tasks
+    state_commitment: float = 1.0            # How committed to current state (0-1)
     
     def __post_init__(self):
         """Initialize with random lateral bias."""
@@ -146,6 +167,15 @@ class BehaviorStateMachine:
             Motor output dict with move_left, move_right, jump, eat, drink
         """
         self.state_duration += dt
+        self.wander_timer -= dt
+        
+        # Track how long we've been fleeing
+        if self.state == BehaviorState.FLEEING:
+            self.flee_timer += dt
+            # Force stop fleeing after max duration (exhaustion)
+            if self.flee_timer > self.max_flee_duration:
+                self.danger_evidence = 0.0  # Reset danger
+                self.flee_timer = 0.0
         
         # Decay evidence accumulators
         self.food_evidence *= self.evidence_decay
@@ -209,10 +239,12 @@ class BehaviorStateMachine:
         if threat_dist < 150:
             self.danger_evidence += (1 - threat_dist / 150) * 0.2
         
-        # CRITICAL: If taking damage (pain), maximum danger evidence
+        # CRITICAL: If taking EXTERNAL damage (not hunger/thirst pain), high danger
+        # Only trigger flee for sudden/high pain spikes from hazards
         pain = sensory.get('pain', 0)
-        if pain > 0.01:  # Any noticeable pain triggers instant flee
-            self.danger_evidence = 1.0  # Instant flee when in pain
+        damage_source = sensory.get('damage_source', 'none')
+        if pain > 0.3 and damage_source in ['hazard', 'attack', 'poison']:
+            self.danger_evidence = min(1.0, self.danger_evidence + 0.5)
         
         # Rest evidence
         fatigue = drives.get('rest', 0)
@@ -228,6 +260,15 @@ class BehaviorStateMachine:
     def _check_transitions(self, sensory: Dict, drives: Dict,
                            creature_x: float, creature_y: float):
         """Check for state transitions with hysteresis."""
+        # UPGRADE 9: Enhanced Hysteresis - prevent rapid state flipping
+        time_since_switch = self.state_duration
+        if time_since_switch < self.state_switch_cooldown:
+            # Still in cooldown, strengthen commitment to current state
+            self.state_commitment = min(1.0, self.state_commitment + 0.1)
+            # Exception: extreme danger can always interrupt
+            if self.danger_evidence < 0.95:
+                return
+        
         # Don't transition too fast (prevents oscillation)
         if self.state_duration < self.min_state_duration:
             # Exception: danger can always interrupt
@@ -239,7 +280,18 @@ class BehaviorStateMachine:
         # Priority-based transitions (danger > needs > exploration)
         
         # 1. DANGER - highest priority, can always interrupt
-        if self.danger_evidence > self.evidence_threshold:
+        # Desperation Logic: If starving, ignore moderate danger (User Request: "rabbit eat bear")
+        hunger = drives.get('hunger', 0)
+        effective_threshold = self.evidence_threshold
+        
+        if hunger > 0.8:
+            # STARVATION MODE: Only flee from immediate death (0.9), ignore discomfort
+            effective_threshold = 0.9
+        elif hunger > 0.6:
+            # Hungry: Braver (0.6)
+            effective_threshold = 0.6
+            
+        if self.danger_evidence > effective_threshold:
             self._transition_to(BehaviorState.FLEEING, sensory, creature_x, creature_y)
             return
         
@@ -324,6 +376,7 @@ class BehaviorStateMachine:
                 self.target_x = water_x
                 self.target_y = water_y
         elif new_state == BehaviorState.FLEEING:
+            self.flee_timer = 0.0  # Reset flee timer when starting to flee
             threat_x = sensory.get('nearest_threat_x', None)
             if threat_x is not None:
                 self.target_x = threat_x  # We'll run AWAY from this
@@ -351,17 +404,52 @@ class BehaviorStateMachine:
             self.motor.target_direction = 0.0
         
         elif self.state == BehaviorState.EXPLORING:
-            # Wander with persistent direction - FULL SPEED
-            self.motor.target_speed = 1.0
-            # Occasionally change direction (but not every frame!)
-            if np.random.random() < 0.01:  # ~1% chance per frame
-                self.motor.target_direction *= -1
-            # Add lateral bias
-            self.motor.target_direction += self.lateral_bias * 0.1
-            self.motor.target_direction = np.clip(self.motor.target_direction, -1, 1)
-            # Only jump when hitting a wall, NOT randomly
-            if sensory.get('wall_left', False) or sensory.get('wall_right', False):
-                self.motor.wants_jump = True
+            # Wander with long-term persistence
+            self.motor.target_speed = 0.8 # Slightly slower than max run
+            
+            # Check world bounds
+            bounds = sensory.get('world_bounds', {})
+            min_x = bounds.get('min_x')
+            max_x = bounds.get('max_x')
+            
+            # Wall avoidance (Higher priority than random wander)
+            wall_override = False
+            if min_x is not None and creature_x < min_x + 100:
+                self.wander_direction = 1.0 # Force Right
+                self.wander_timer = max(self.wander_timer, 1.0) # Ensure we stick to it
+                wall_override = True
+            elif max_x is not None and creature_x > max_x - 100:
+                self.wander_direction = -1.0 # Force Left
+                self.wander_timer = max(self.wander_timer, 1.0)
+                wall_override = True
+            
+            if not wall_override and self.wander_timer <= 0:
+                # Pick new direction and duration
+                self.wander_timer = np.random.uniform(2.0, 6.0) # Wander for 2-6 seconds
+                # Pick direction: Favor continuing, but sometimes flip
+                if np.random.random() < 0.7:
+                     # Continue or slight variation
+                     self.wander_direction = 1.0 if self.lateral_bias > 0 else -1.0
+                else:
+                     # Flip
+                     self.wander_direction = -1.0 if self.lateral_bias > 0 else 1.0
+                
+                # Add heavy randomness
+                if np.random.random() < 0.5:
+                    self.wander_direction *= -1
+
+            self.motor.target_direction = self.wander_direction
+
+            
+            # Avoid walls
+            if sensory.get('wall_left', False):
+                 self.motor.target_direction = 1.0
+                 self.wander_direction = 1.0
+                 self.wander_timer = 2.0 # Reset timer to walk away from wall
+            elif sensory.get('wall_right', False):
+                 self.motor.target_direction = -1.0
+                 self.wander_direction = -1.0
+                 self.wander_timer = 2.0
         
         elif self.state == BehaviorState.SEEKING_FOOD:
             self._seek_target(sensory, creature_x, 'nearest_food_x', 'nearest_food_distance')

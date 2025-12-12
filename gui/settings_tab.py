@@ -10,6 +10,7 @@ This tab provides:
 """
 
 import json
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
@@ -18,10 +19,21 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QGroupBox, QGridLayout, QScrollArea, QSlider, QSpinBox,
     QListWidget, QListWidgetItem, QSplitter, QFrame, QComboBox,
-    QFileDialog, QLineEdit, QCheckBox, QTabWidget, QColorDialog
+    QFileDialog, QLineEdit, QCheckBox, QTabWidget, QColorDialog,
+    QInputDialog
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap, QImage, QColor, QPainter, QIcon
+# We need SoundManager type for annotation, but avoid circular import if possible
+# Use TYPE_CHECKING or just dynamic typing
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from gui.sound_manager import SoundManager
+
+try:
+    from brain.world import ToolType
+except ImportError:
+    ToolType = None
 
 
 # =============================================================================
@@ -183,17 +195,32 @@ class WorldObjectConfig:
 class WorldObjectType:
     WATER = "water"
     HAZARD = "hazard"  # Fire, lava, etc
-    FOOD = "food"
+    FOOD = "food" # Generic fallback
     GROUND = "ground"
     SHELTER = "shelter"
     
-    ALL_TYPES = [WATER, HAZARD, FOOD, GROUND, SHELTER]
+    # Specific Food Types matching GameTab logic
+    FOOD_PLANT = "food_plant"
+    FOOD_SWEET_BERRY = "food_sweet_berry"
+    FOOD_BITTER_BERRY = "food_bitter_berry"
+    FOOD_POISON_BERRY = "food_poison_berry"
+    FOOD_MEAT = "food_meat"
+    
+    ALL_TYPES = [WATER, HAZARD, GROUND, SHELTER, FOOD, 
+                 FOOD_PLANT, FOOD_SWEET_BERRY, FOOD_BITTER_BERRY, 
+                 FOOD_POISON_BERRY, FOOD_MEAT]
 
 
 @dataclass
 class CreatureVisualConfig:
     """Complete visual configuration for creatures and world objects."""
+    # Indexed backgrounds: {index: "path/to/image.png"}
+    # Index 0 is the center/default world.
+    indexed_backgrounds: Dict[int, str] = field(default_factory=dict)
+    
+    # Deprecated: Kept for backward compatibility during load
     background_path: Optional[str] = None
+    
     body_parts: Dict[str, Dict[str, BodyPartSprite]] = field(default_factory=dict)
     # structure: body_parts[part_name][age_stage] = BodyPartSprite
     world_objects: Dict[str, WorldObjectConfig] = field(default_factory=dict)
@@ -256,24 +283,40 @@ class CreatureVisualConfig:
         parts_dict = {}
         for part, stages in self.body_parts.items():
             parts_dict[part] = {}
-            for stage, sprite in stages.items():
-                parts_dict[part][stage] = sprite.to_dict()
-        
-        objects_dict = {}
-        for obj_type, config in self.world_objects.items():
-            objects_dict[obj_type] = config.to_dict()
-        
         return {
-            'background_path': self.background_path,
-            'body_parts': parts_dict,
-            'world_objects': objects_dict,
+            "indexed_backgrounds": {str(k): v for k, v in self.indexed_backgrounds.items()},
+            "background_path": self.background_path, # Legacy
+            "body_parts": {
+                part: {stage: sprite.to_dict() for stage, sprite in stages.items()}
+                for part, stages in self.body_parts.items()
+            },
+            "world_objects": {
+                obj: config.to_dict() for obj, config in self.world_objects.items()
+            }
         }
     
     @classmethod
     def from_dict(cls, data: Dict) -> 'CreatureVisualConfig':
         """Deserialize from dictionary."""
-        config = cls(background_path=data.get('background_path'))
-        if 'body_parts' in data:
+        config = cls()
+        
+        # Load indexed backgrounds
+        if "indexed_backgrounds" in data:
+            for k, v in data["indexed_backgrounds"].items():
+                try:
+                    config.indexed_backgrounds[int(k)] = v
+                except ValueError:
+                    pass
+        
+        # Legacy support
+        if "background_path" in data and data["background_path"]:
+            config.background_path = data["background_path"]
+            # If no indexed bg, use this as 0
+            if 0 not in config.indexed_backgrounds:
+                config.indexed_backgrounds[0] = config.background_path
+                
+        # Load body parts
+        if "body_parts" in data:
             for part, stages in data['body_parts'].items():
                 config.body_parts[part] = {}
                 for stage, sprite_data in stages.items():
@@ -356,9 +399,10 @@ class SettingsTab(QWidget):
     # Default autosave path
     AUTOSAVE_PATH = Path.home() / ".brain_v3_visual_config.json"
     
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, sound_manager=None):
         super().__init__(parent)
         self.config = CreatureVisualConfig()
+        self.sound_manager = sound_manager
         self.current_part = BodyPart.HEAD
         self.current_stage = AgeStage.ADULT
         self.sprite_cache: Dict[str, QPixmap] = {}  # Cache loaded pixmaps
@@ -374,6 +418,7 @@ class SettingsTab(QWidget):
                 self._update_background_preview()
                 self._update_sprite_ui()
                 self._update_config_info()
+                self._update_bg_list()  # Update backgrounds by index list
                 print(f"Loaded visual config from {self.AUTOSAVE_PATH}")
             except Exception as e:
                 print(f"Failed to load autosave: {e}")
@@ -414,6 +459,11 @@ class SettingsTab(QWidget):
         color_tab = self._create_color_settings_tab()
         tabs.addTab(color_tab, "🎨 DNA Colors")
         
+        # Sound settings
+        if self.sound_manager:
+            sound_tab = self._create_sound_tab()
+            tabs.addTab(sound_tab, "🔊 Sounds")
+        
         # Save/Load settings
         io_tab = self._create_io_tab()
         tabs.addTab(io_tab, "💾 Save/Load")
@@ -421,42 +471,150 @@ class SettingsTab(QWidget):
         layout.addWidget(tabs)
     
     def _create_background_tab(self) -> QWidget:
-        """Create background image settings."""
+        """Create background image settings with index support."""
         widget = QWidget()
         layout = QVBoxLayout(widget)
         
-        # Current background preview
-        preview_group = QGroupBox("Current Background")
+        # Upper area: Background List and Preview
+        upper_layout = QHBoxLayout()
+        
+        # Left: List of backgrounds
+        list_group = QGroupBox("Backgrounds by Index")
+        list_layout = QVBoxLayout(list_group)
+        
+        self.bg_list = QListWidget()
+        self.bg_list.currentItemChanged.connect(self._on_bg_selected)
+        list_layout.addWidget(self.bg_list)
+        
+        # Buttons
+        btn_layout = QHBoxLayout()
+        add_btn = QPushButton("➕ Add")
+        add_btn.clicked.connect(self._add_background)
+        btn_layout.addWidget(add_btn)
+        
+        remove_btn = QPushButton("➖ Remove")
+        remove_btn.clicked.connect(self._remove_background)
+        btn_layout.addWidget(remove_btn)
+        
+        list_layout.addLayout(btn_layout)
+        upper_layout.addWidget(list_group, 1)
+        
+        # Right: Preview
+        preview_group = QGroupBox("Preview")
         preview_layout = QVBoxLayout(preview_group)
         
-        self.bg_preview = QLabel("No background selected")
-        self.bg_preview.setMinimumSize(400, 200)
-        self.bg_preview.setMaximumSize(600, 300)
+        self.bg_preview = QLabel("No image selected")
+        self.bg_preview.setMinimumSize(300, 200)
+        self.bg_preview.setMaximumSize(400, 300)
         self.bg_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.bg_preview.setStyleSheet("border: 1px solid gray; background: #222;")
+        self.bg_preview.setScaledContents(False) # Keep aspect ratio logic manual
         preview_layout.addWidget(self.bg_preview)
         
         self.bg_path_label = QLabel("Path: None")
+        self.bg_path_label.setWordWrap(True)
         preview_layout.addWidget(self.bg_path_label)
         
-        layout.addWidget(preview_group)
+        upper_layout.addWidget(preview_group, 2)
         
-        # Background controls
-        control_layout = QHBoxLayout()
+        layout.addLayout(upper_layout)
         
-        select_btn = QPushButton("📁 Select Image...")
-        select_btn.clicked.connect(self._select_background)
-        control_layout.addWidget(select_btn)
-        
-        clear_btn = QPushButton("🗑️ Clear Background")
-        clear_btn.clicked.connect(self._clear_background)
-        control_layout.addWidget(clear_btn)
-        
-        control_layout.addStretch()
-        layout.addLayout(control_layout)
+        # Index control (for selected item modifications? Or just handle on add)
+        # For now, indices are immutable once added to keep it simple, or re-add to move.
+        layout.addWidget(QLabel("Note: Index 0 is the center world. Negative indices extend left, positive right."))
         
         layout.addStretch()
+        
+        # Populate list
+        self._update_bg_list()
+        
         return widget
+
+    def _update_bg_list(self):
+        """Update the list of backgrounds from config."""
+        # Guard: Check if widget exists yet
+        if not hasattr(self, 'bg_list') or self.bg_list is None:
+            return
+            
+        self.bg_list.clear()
+        
+        # Sort by index
+        sorted_indices = sorted(self.config.indexed_backgrounds.keys())
+        
+        for idx in sorted_indices:
+            path = self.config.indexed_backgrounds[idx]
+            filename = Path(path).name
+            item = QListWidgetItem(f"Index {idx}: {filename}")
+            item.setData(Qt.ItemDataRole.UserRole, idx)
+            self.bg_list.addItem(item)
+            
+    def _add_background(self):
+        """Add a new background with index."""
+        path, _ = QFileDialog.getOpenFileName(self, "Select Background Image", "", "Images (*.png *.jpg *.jpeg *.bmp)")
+        if not path:
+            return
+            
+        # Ask for index
+        # We need a simple dialog for this. 
+        # Since we are inside a method, let's use QInputDialog if available or a custom simple dialog.
+        # PyQt6 has QInputDialog.
+        from PyQt6.QtWidgets import QInputDialog
+        
+        idx, ok = QInputDialog.getInt(self, "Background Index", "Enter World Index (0=Center, -1=Left, 1=Right):", 0, -100, 100, 1)
+        if ok:
+            self.config.indexed_backgrounds[idx] = path
+            self.config.background_path = path if idx == 0 else self.config.background_path # Sync legacy
+            self._update_bg_list()
+            self.settings_changed.emit()
+            
+    def _remove_background(self):
+        """Remove selected background."""
+        item = self.bg_list.currentItem()
+        if not item:
+            return
+            
+        idx = item.data(Qt.ItemDataRole.UserRole)
+        if idx in self.config.indexed_backgrounds:
+            del self.config.indexed_backgrounds[idx]
+            if idx == 0:
+                 self.config.background_path = None # Clear legacy
+            self._update_bg_list()
+            self.settings_changed.emit()
+            self.bg_preview.setText("No selection")
+            self.bg_path_label.setText("Path: None")
+
+    def _on_bg_selected(self, current, previous):
+        """Handle background selection."""
+        if not current:
+            return
+            
+        idx = current.data(Qt.ItemDataRole.UserRole)
+        path = self.config.indexed_backgrounds.get(idx)
+        
+        if path:
+            self.bg_path_label.setText(f"Index {idx}: {Path(path).name}")
+            
+            # Robust Preview Loading
+            abs_path = os.path.abspath(path)
+            if not os.path.exists(abs_path):
+                self.bg_preview.setText(f"File not found:\n{path}")
+                return
+                
+            pixmap = QPixmap(abs_path)
+            if not pixmap.isNull():
+                 # Use fixed reasonable size for preview scaling to avoid 0-size issues
+                 scaled_pix = pixmap.scaled(300, 200, 
+                                          Qt.AspectRatioMode.KeepAspectRatio, 
+                                          Qt.TransformationMode.SmoothTransformation)
+                 self.bg_preview.setPixmap(scaled_pix)
+            else:
+                 self.bg_preview.setText("Failed to load image format")
+        else:
+             self.bg_preview.setText("Image not found")
+             
+    def _update_background_preview(self):
+        """Legacy compatibility - just update list."""
+        self._update_bg_list()
     
     def _create_body_parts_tab(self) -> QWidget:
         """Create body part sprite configuration."""
@@ -616,6 +774,352 @@ class SettingsTab(QWidget):
         
         return widget
     
+    def _create_world_objects_tab(self) -> QWidget:
+        """Create world object configuration."""
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        
+        # Left: Object Type Selection
+        left_group = QGroupBox("Object Type")
+        left_layout = QVBoxLayout(left_group)
+        
+        self.obj_type_list = QListWidget()
+        self.obj_type_list = QListWidget()
+        
+        # Standard Types
+        standard_types = [WorldObjectType.GROUND, WorldObjectType.WATER, 
+                         WorldObjectType.HAZARD, WorldObjectType.SHELTER]
+                         
+        for obj_type in standard_types:
+            display = obj_type.replace("_", " ").title()
+            item = QListWidgetItem(display)
+            item.setData(Qt.ItemDataRole.UserRole, obj_type)
+            self.obj_type_list.addItem(item)
+            
+        # Grouped Edible Type
+        edible_item = QListWidgetItem("Edible")
+        edible_item.setData(Qt.ItemDataRole.UserRole, "edible_group")
+        self.obj_type_list.addItem(edible_item)
+        
+        # Grouped Tool Type (TIER 4)
+        tool_item = QListWidgetItem("Tools")
+        tool_item.setData(Qt.ItemDataRole.UserRole, "tool_group")
+        self.obj_type_list.addItem(tool_item)
+            
+        self.obj_type_list.currentItemChanged.connect(self._on_obj_type_selected)
+        left_layout.addWidget(self.obj_type_list)
+        
+        layout.addWidget(left_group, 1)
+        
+        # Right: Configuration
+        right_group = QGroupBox("Visual Configuration")
+        right_layout = QVBoxLayout(right_group)
+        
+        # Preview
+        self.obj_preview = QLabel("No Selection")
+        self.obj_preview.setMinimumSize(100, 100)
+        self.obj_preview.setMaximumSize(200, 200)
+        self.obj_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.obj_preview.setStyleSheet("border: 1px solid gray; background: #333;")
+        right_layout.addWidget(self.obj_preview)
+        
+        # Image List
+        right_layout.addWidget(QLabel("Images (Animated sequence if >1):"))
+        self.obj_img_list = QListWidget()
+        self.obj_img_list.setMaximumHeight(100)
+        self.obj_img_list.currentItemChanged.connect(self._on_obj_image_selected)
+        right_layout.addWidget(self.obj_img_list)
+        
+        # Buttons
+        btn_layout = QHBoxLayout()
+        add_btn = QPushButton("➕ Add Image")
+        add_btn.clicked.connect(self._add_obj_image)
+        btn_layout.addWidget(add_btn)
+        
+        rem_btn = QPushButton("➖ Remove")
+        rem_btn.clicked.connect(self._remove_obj_image)
+        btn_layout.addWidget(rem_btn)
+        
+        right_layout.addLayout(btn_layout)
+        
+        # Settings
+        form_layout = QGridLayout()
+        
+        # Scale
+        form_layout.addWidget(QLabel("Scale:"), 0, 0)
+        self.obj_scale = QSpinBox()
+        self.obj_scale.setRange(10, 2000)
+        self.obj_scale.setValue(100)
+        self.obj_scale.setSuffix("%")
+        self.obj_scale.valueChanged.connect(self._save_obj_config)
+        form_layout.addWidget(self.obj_scale, 0, 1)
+        
+        # Animation Speed
+        form_layout.addWidget(QLabel("Anim Speed:"), 1, 0)
+        self.obj_speed = QSpinBox()
+        self.obj_speed.setRange(1, 60) # frames
+        self.obj_speed.setValue(10)
+        self.obj_speed.setSuffix(" frames")
+        self.obj_speed.valueChanged.connect(self._save_obj_config)
+        form_layout.addWidget(self.obj_speed, 1, 1)
+        
+        # Tile Mode
+        self.obj_tile_check = QCheckBox("Tile Image (Repeats)")
+        self.obj_tile_check.toggled.connect(self._save_obj_config)
+        form_layout.addWidget(self.obj_tile_check, 2, 0, 1, 2)
+        
+        right_layout.addLayout(form_layout)
+        right_layout.addStretch()
+        
+        layout.addWidget(right_group, 2)
+        
+        return widget
+
+    def _on_obj_image_selected(self, current, previous):
+        """Handle selection of specific image in the list."""
+        if not current:
+            return
+            
+        data = current.data(Qt.ItemDataRole.UserRole)
+        if not data:
+            return
+            
+        obj_type = data["type"]
+        path = data["path"]
+        
+        # Load config for this specific type
+        config = self.config.get_world_object(obj_type)
+        if config:
+            self._update_obj_settings_ui(config, preview_path=path)
+
+    def _on_obj_type_selected(self, current, previous):
+        if not current:
+            return
+        
+        obj_type = current.data(Qt.ItemDataRole.UserRole)
+        self.obj_img_list.clear()
+        
+        if obj_type == "edible_group":
+            # Aggregate all food types
+            food_types = [
+                WorldObjectType.FOOD, # Generic fallback
+                WorldObjectType.FOOD_SWEET_BERRY,
+                WorldObjectType.FOOD_BITTER_BERRY, 
+                WorldObjectType.FOOD_POISON_BERRY,
+                WorldObjectType.FOOD_MEAT,
+                WorldObjectType.FOOD_PLANT
+            ]
+            
+            for f_type in food_types:
+                config = self.config.get_world_object(f_type)
+                if config and config.image_paths:
+                    for path in config.image_paths:
+                        # Format: "Sweet Berry: berry.png"
+                        name = f_type.replace("food_", "").replace("_", " ").title()
+                        item_text = f"{name}: {Path(path).name}"
+                        item = QListWidgetItem(item_text)
+                        item.setData(Qt.ItemDataRole.UserRole, {"type": f_type, "path": path}) # Store dict
+                        self.obj_img_list.addItem(item)
+            
+            self.obj_preview.setText("Select Image")
+            self.obj_preview.setPixmap(QPixmap())
+        
+        elif obj_type == "tool_group":
+            # Aggregate all tool types (TIER 4)
+            tool_types = [
+                "tool_stick",
+                "tool_stone",
+                "tool_leaf",
+                "tool_shell",
+                "tool_bone"
+            ]
+            
+            for t_type in tool_types:
+                config = self.config.get_world_object(t_type)
+                if config and config.image_paths:
+                    for path in config.image_paths:
+                        # Format: "Stick: stick.png"
+                        name = t_type.replace("tool_", "").title()
+                        item_text = f"{name}: {Path(path).name}"
+                        item = QListWidgetItem(item_text)
+                        item.setData(Qt.ItemDataRole.UserRole, {"type": t_type, "path": path})
+                        self.obj_img_list.addItem(item)
+            
+            self.obj_preview.setText("Select Image")
+            self.obj_preview.setPixmap(QPixmap())
+        
+        else:
+            config = self.config.get_world_object(obj_type)
+            if config:
+                for path in config.image_paths:
+                    item = QListWidgetItem(Path(path).name)
+                    item.setData(Qt.ItemDataRole.UserRole, {"type": obj_type, "path": path})
+                    self.obj_img_list.addItem(item)
+                
+                # Select first one
+                if self.obj_img_list.count() > 0:
+                    self.obj_img_list.setCurrentRow(0)
+                else:
+                    self._update_obj_settings_ui(config)
+            else:
+                self.obj_preview.setText("No Config")
+                self.obj_preview.setPixmap(QPixmap())
+
+    def _update_obj_settings_ui(self, config, preview_path=None):
+        self.obj_scale.blockSignals(True)
+        self.obj_scale.setValue(int(config.scale * 100))
+        self.obj_scale.blockSignals(False)
+        
+        self.obj_speed.blockSignals(True)
+        self.obj_speed.setValue(int(config.animation_speed * 60) if config.animation_speed else 12)
+        self.obj_speed.blockSignals(False)
+        
+        self.obj_tile_check.blockSignals(True)
+        self.obj_tile_check.setChecked(config.tile_mode)
+        self.obj_tile_check.blockSignals(False)
+        
+        if preview_path:
+            abs_path = str(Path(preview_path).absolute())
+            pix = QPixmap(preview_path)
+            if not pix.isNull():
+                self.obj_preview.setPixmap(pix.scaled(100, 100, Qt.AspectRatioMode.KeepAspectRatio))
+            else:
+                 # Try absolute
+                 pix = QPixmap(abs_path)
+                 if not pix.isNull():
+                    self.obj_preview.setPixmap(pix.scaled(100, 100, Qt.AspectRatioMode.KeepAspectRatio))
+                 else:
+                     self.obj_preview.setText(f"Error\n{Path(preview_path).name}")
+        elif config.image_paths:
+            abs_path = str(Path(config.image_paths[0]).absolute())
+            pix = QPixmap(config.image_paths[0])
+            if not pix.isNull():
+                self.obj_preview.setPixmap(pix.scaled(100, 100, Qt.AspectRatioMode.KeepAspectRatio))
+            else:
+                 # Try absolute
+                 pix = QPixmap(abs_path)
+                 if not pix.isNull():
+                    self.obj_preview.setPixmap(pix.scaled(100, 100, Qt.AspectRatioMode.KeepAspectRatio))
+                 else:
+                     self.obj_preview.setText(f"Error\n{config.image_paths[0]}")
+        else:
+             self.obj_preview.setText("No Image")
+             self.obj_preview.setPixmap(QPixmap())
+
+
+    def _add_obj_image(self):
+        item = self.obj_type_list.currentItem()
+        if not item: return
+        obj_type = item.data(Qt.ItemDataRole.UserRole)
+        
+        # If adding to Edible group, we must select WHICH kind of edible
+        target_type = obj_type
+        if obj_type == "edible_group":
+            type_map = {
+                "Sweet Berry": WorldObjectType.FOOD_SWEET_BERRY,
+                "Bitter Berry": WorldObjectType.FOOD_BITTER_BERRY,
+                "Poison Berry": WorldObjectType.FOOD_POISON_BERRY,
+                "Meat": WorldObjectType.FOOD_MEAT,
+                "Plant": WorldObjectType.FOOD_PLANT,
+                "Generic Food": WorldObjectType.FOOD
+            }
+            
+            sub_type, ok = QInputDialog.getItem(
+                self, "Select Edible Type", 
+                "What kind of edible object is this?", 
+                list(type_map.keys()), 0, False
+            )
+            if not ok:
+                return
+            target_type = type_map[sub_type]
+        
+        elif obj_type == "tool_group":
+            # Select which tool type (TIER 4)
+            type_map = {
+                "Stick": "tool_stick",
+                "Stone": "tool_stone",
+                "Leaf": "tool_leaf",
+                "Shell": "tool_shell",
+                "Bone": "tool_bone"
+            }
+            
+            sub_type, ok = QInputDialog.getItem(
+                self, "Select Tool Type",
+                "What kind of tool is this?",
+                list(type_map.keys()), 0, False
+            )
+            if not ok:
+                return
+            target_type = type_map[sub_type]
+        
+        path, _ = QFileDialog.getOpenFileName(self, "Select Image", "", "Images (*.png *.jpg)")
+        if path:
+            config = self.config.get_world_object(target_type)
+            if not config:
+                config = WorldObjectConfig(object_type=target_type)
+                self.config.set_world_object(target_type, config)
+            
+            config.add_image(path)
+            self._on_obj_type_selected(item, None)
+            self.settings_changed.emit()
+
+    def _remove_obj_image(self):
+        item = self.obj_type_list.currentItem()
+        if not item: return
+        
+        # Get selected image item
+        img_item = self.obj_img_list.currentItem()
+        if not img_item: return
+        
+        # Retrieve stored data
+        data = img_item.data(Qt.ItemDataRole.UserRole)
+        # Handle both legacy (dict) and old (implicit) cases if any
+        if isinstance(data, dict):
+            target_type = data['type']
+            path = data['path']
+            
+            config = self.config.get_world_object(target_type)
+            if config:
+                config.remove_image(path)
+                self._on_obj_type_selected(item, None)
+                self.settings_changed.emit()
+                
+    def _save_obj_config(self):
+        # Save based on CURRENTLY SELECTED IMAGE context if possible, 
+        # or defaults for the main type.
+        # Issue: If we have multiple types in the list (Edible), which one are we editing?
+        # Ideally, we edit the type of the SELECTED IMAGE.
+        
+        item = self.obj_type_list.currentItem()
+        if not item: return
+        
+        img_item = self.obj_img_list.currentItem()
+        target_type = None
+        
+        if img_item:
+            data = img_item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(data, dict):
+                target_type = data['type']
+        
+        if not target_type:
+            # Fallback to main item if not group
+            obj_type = item.data(Qt.ItemDataRole.UserRole)
+            if obj_type != "edible_group":
+                target_type = obj_type
+            else:
+                 # If group selected but no image selected, we can't save?
+                 return
+
+        config = self.config.get_world_object(target_type)
+        if not config:
+            config = WorldObjectConfig(object_type=target_type)
+            self.config.set_world_object(target_type, config)
+            
+        config.scale = self.obj_scale.value() / 100.0
+        config.animation_speed = self.obj_speed.value() / 60.0
+        config.tile_mode = self.obj_tile_check.isChecked()
+        self.settings_changed.emit()
+    
     def _create_color_settings_tab(self) -> QWidget:
         """Create color preview and testing settings."""
         widget = QWidget()
@@ -682,195 +1186,78 @@ class SettingsTab(QWidget):
         layout.addStretch()
         self._update_color_preview()
         return widget
-    
-    def _create_world_objects_tab(self) -> QWidget:
-        """Create world objects image settings tab."""
+        
+    def _create_sound_tab(self) -> QWidget:
+        """Create sound configuration tab."""
         widget = QWidget()
         layout = QVBoxLayout(widget)
         
-        # Object type selector
-        type_group = QGroupBox("Select Object Type")
-        type_layout = QHBoxLayout(type_group)
+        # Master Volume
+        vol_group = QGroupBox("Master Volume")
+        vol_layout = QHBoxLayout(vol_group)
         
-        self.object_type_combo = QComboBox()
-        self.object_type_combo.addItems([
-            "💧 Water", "🔥 Hazard/Fire", "🍎 Food", 
-            "🪨 Ground", "🏠 Shelter"
-        ])
-        self.object_type_combo.currentIndexChanged.connect(self._on_object_type_changed)
-        type_layout.addWidget(QLabel("Object Type:"))
-        type_layout.addWidget(self.object_type_combo)
-        layout.addWidget(type_group)
+        mute_btn = QCheckBox("Mute All")
+        mute_btn.setChecked(self.sound_manager.config.muted)
+        mute_btn.stateChanged.connect(lambda s: self.sound_manager.set_muted(s == 2))
+        vol_layout.addWidget(mute_btn)
         
-        # Preview and image list
-        preview_group = QGroupBox("Object Images")
-        preview_layout = QHBoxLayout(preview_group)
+        vol_layout.addWidget(QLabel("Volume:"))
+        vol_slider = QSlider(Qt.Orientation.Horizontal)
+        vol_slider.setRange(0, 100)
+        vol_slider.setValue(int(self.sound_manager.config.master_volume * 100))
+        vol_slider.valueChanged.connect(lambda v: self.sound_manager.set_master_volume(v / 100.0))
+        vol_layout.addWidget(vol_slider)
         
-        # Image list
-        list_layout = QVBoxLayout()
-        self.object_image_list = QListWidget()
-        self.object_image_list.setMaximumHeight(150)
-        self.object_image_list.currentRowChanged.connect(self._on_object_image_selected)
-        list_layout.addWidget(QLabel("Image variants/frames:"))
-        list_layout.addWidget(self.object_image_list)
+        layout.addWidget(vol_group)
         
-        btn_layout = QHBoxLayout()
-        add_btn = QPushButton("➕ Add Image")
-        add_btn.clicked.connect(self._add_object_image)
-        btn_layout.addWidget(add_btn)
+        # Sound Mappings
+        map_group = QGroupBox("Action Sounds")
+        map_layout = QGridLayout(map_group)
         
-        remove_btn = QPushButton("➖ Remove")
-        remove_btn.clicked.connect(self._remove_object_image)
-        btn_layout.addWidget(remove_btn)
-        list_layout.addLayout(btn_layout)
+        actions = ['eat', 'drink', 'sleep', 'hurt', 'die', 'breed']
+        self.sound_labels = {}
         
-        preview_layout.addLayout(list_layout)
+        def pick_sound(action_name):
+            path, _ = QFileDialog.getOpenFileName(
+                self, f"Select Sound for {action_name}", 
+                str(Path.home()), 
+                "Audio Files (*.wav *.mp3 *.ogg)"
+            )
+            if path:
+                self.sound_manager.set_sound_mapping(action_name, path)
+                self.sound_labels[action_name].setText(Path(path).name)
         
-        # Preview
-        preview_v_layout = QVBoxLayout()
-        self.object_preview = QLabel("No image")
-        self.object_preview.setMinimumSize(150, 150)
-        self.object_preview.setMaximumSize(200, 200)
-        self.object_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.object_preview.setStyleSheet("border: 1px solid gray; background: #333;")
-        preview_v_layout.addWidget(QLabel("Preview:"))
-        preview_v_layout.addWidget(self.object_preview)
-        preview_layout.addLayout(preview_v_layout)
-        
-        layout.addWidget(preview_group)
-        
-        # Settings
-        settings_group = QGroupBox("Object Settings")
-        settings_layout = QGridLayout(settings_group)
-        
-        self.tile_mode_check = QCheckBox("Tile Mode (repeat image)")
-        self.tile_mode_check.setChecked(True)
-        self.tile_mode_check.stateChanged.connect(self._on_object_settings_changed)
-        settings_layout.addWidget(self.tile_mode_check, 0, 0, 1, 2)
-        
-        settings_layout.addWidget(QLabel("Animation Speed (sec):"), 1, 0)
-        self.anim_speed_spin = QSpinBox()
-        self.anim_speed_spin.setRange(1, 100)
-        self.anim_speed_spin.setValue(20)
-        self.anim_speed_spin.valueChanged.connect(self._on_object_settings_changed)
-        settings_layout.addWidget(self.anim_speed_spin, 1, 1)
-        
-        settings_layout.addWidget(QLabel("Scale:"), 2, 0)
-        self.object_scale_spin = QSpinBox()
-        self.object_scale_spin.setRange(10, 500)
-        self.object_scale_spin.setValue(100)
-        self.object_scale_spin.setSuffix("%")
-        self.object_scale_spin.valueChanged.connect(self._on_object_settings_changed)
-        settings_layout.addWidget(self.object_scale_spin, 2, 1)
-        
-        layout.addWidget(settings_group)
-        
-        # Help text
-        help_label = QLabel(
-            "💡 Add images for world objects. Multiple images = animation.\n"
-            "Water: pools, fountains. Hazard: fire, lava. Food: berries, plants."
-        )
-        help_label.setStyleSheet("color: gray; font-style: italic;")
-        layout.addWidget(help_label)
-        
+        for i, action in enumerate(actions):
+            map_layout.addWidget(QLabel(action.title() + ":"), i, 0)
+            
+            # Current file label
+            current_path = self.sound_manager.config.sound_mappings.get(action, "")
+            lbl = QLabel(Path(current_path).name if current_path else "Default/None")
+            lbl.setStyleSheet("color: #888;")
+            self.sound_labels[action] = lbl
+            map_layout.addWidget(lbl, i, 1)
+            
+            # Select button
+            btn = QPushButton("📁")
+            btn.setMaximumWidth(40)
+            # Use default arg to capture loop variable
+            btn.clicked.connect(lambda checked, a=action: pick_sound(a))
+            map_layout.addWidget(btn, i, 2)
+            
+            # Play test button
+            play_btn = QPushButton("▶")
+            play_btn.setMaximumWidth(40)
+            play_btn.clicked.connect(lambda checked, a=action: self.sound_manager.play(a))
+            map_layout.addWidget(play_btn, i, 3)
+            
+        layout.addWidget(map_group)
         layout.addStretch()
-        
-        # Initialize current selection
-        self.current_object_type = WorldObjectType.WATER
-        self._update_object_ui()
         
         return widget
     
-    def _get_current_object_type(self) -> str:
-        """Get the WorldObjectType for current combo selection."""
-        idx = self.object_type_combo.currentIndex()
-        types = [WorldObjectType.WATER, WorldObjectType.HAZARD, WorldObjectType.FOOD,
-                 WorldObjectType.GROUND, WorldObjectType.SHELTER]
-        return types[idx] if idx < len(types) else WorldObjectType.WATER
+    # NOTE: _create_world_objects_tab is defined earlier (line ~765) with better UI
+    # The old duplicate has been removed.
     
-    def _on_object_type_changed(self, index: int):
-        """Handle object type combo change."""
-        self.current_object_type = self._get_current_object_type()
-        self._update_object_ui()
-    
-    def _update_object_ui(self):
-        """Update UI to show current object type's settings."""
-        config = self.config.get_world_object(self.current_object_type)
-        if not config:
-            config = WorldObjectConfig(object_type=self.current_object_type)
-            self.config.set_world_object(self.current_object_type, config)
-        
-        # Update image list
-        self.object_image_list.clear()
-        for path in config.image_paths:
-            self.object_image_list.addItem(Path(path).name)
-        
-        # Update settings (block signals to avoid triggering save during load)
-        self.tile_mode_check.blockSignals(True)
-        self.anim_speed_spin.blockSignals(True)
-        self.object_scale_spin.blockSignals(True)
-        
-        self.tile_mode_check.setChecked(config.tile_mode)
-        self.anim_speed_spin.setValue(int(config.animation_speed * 100))
-        self.object_scale_spin.setValue(int(config.scale * 100))
-        
-        self.tile_mode_check.blockSignals(False)
-        self.anim_speed_spin.blockSignals(False)
-        self.object_scale_spin.blockSignals(False)
-        
-        # Update preview
-        self._update_object_preview()
-    
-    def _update_object_preview(self):
-        """Update the object preview image."""
-        config = self.config.get_world_object(self.current_object_type)
-        if config and config.image_paths:
-            idx = self.object_image_list.currentRow()
-            if idx < 0:
-                idx = 0
-            if idx < len(config.image_paths):
-                pixmap = QPixmap(config.image_paths[idx])
-                if not pixmap.isNull():
-                    self.object_preview.setPixmap(
-                        pixmap.scaled(150, 150, Qt.AspectRatioMode.KeepAspectRatio)
-                    )
-                    return
-        self.object_preview.setText("No image")
-    
-    def _on_object_image_selected(self, row: int):
-        """Handle image selection in list."""
-        self._update_object_preview()
-    
-    def _add_object_image(self):
-        """Add an image to current object type."""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Object Image", "",
-            "Images (*.png *.jpg *.jpeg *.gif *.bmp);;All Files (*)"
-        )
-        if file_path:
-            config = self.config.get_world_object(self.current_object_type)
-            config.add_image(file_path)
-            self._update_object_ui()
-            self.settings_changed.emit()
-    
-    def _remove_object_image(self):
-        """Remove selected image from current object type."""
-        config = self.config.get_world_object(self.current_object_type)
-        idx = self.object_image_list.currentRow()
-        if config and 0 <= idx < len(config.image_paths):
-            config.remove_image(config.image_paths[idx])
-            self._update_object_ui()
-            self.settings_changed.emit()
-    
-    def _on_object_settings_changed(self):
-        """Handle object settings changes."""
-        config = self.config.get_world_object(self.current_object_type)
-        if config:
-            config.tile_mode = self.tile_mode_check.isChecked()
-            config.animation_speed = self.anim_speed_spin.value() / 100.0
-            config.scale = self.object_scale_spin.value() / 100.0
-            self.settings_changed.emit()
-
     def _create_io_tab(self) -> QWidget:
         """Create save/load settings tab."""
         widget = QWidget()

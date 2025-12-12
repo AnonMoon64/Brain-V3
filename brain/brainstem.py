@@ -443,7 +443,18 @@ class Brainstem:
                 self.dopamine.record_action('drink', 0.5)
         
         # 2. Pain/flee reflex
-        if pain > 0.1:
+        # Desperation Logic: If critically hungry, tolerate more pain before fleeing
+        hunger = self.drives[DriveType.HUNGER].level
+        flee_threshold = 0.1
+        
+        if hunger > 0.8:
+            # Starving: Only flee if pain is severe (near death)
+            flee_threshold = 0.5 
+        elif hunger > 0.6:
+            # Very hungry: Tolerant
+            flee_threshold = 0.3
+            
+        if pain > flee_threshold:
             flee_response = self.reflexes[ReflexType.FLEE_PAIN].trigger(pain)
             if flee_response > 0:
                 # Flee AWAY from pain source
@@ -620,6 +631,27 @@ class Brainstem:
         # Negative dopamine signal
         self.dopamine.receive_reward(-amount)
     
+    def set_phenotype_traits(self, bravery: float):
+        """
+        Adjust brainstem parameters based on DNA.
+        
+        Args:
+           bravery: 0.0 (Coward) to 1.0 (Brave).
+                    Controls how fast PAIN/FEAR drives decay.
+        """
+        # Base decay rates
+        base_pain_decay = 0.3
+        base_fear_decay = 0.2
+        
+        # Modifier: Brave creatures recover 2x faster, Cowards 2x slower
+        # bravery 0.5 = 1.0x (Normal)
+        # bravery 1.0 = 2.0x
+        # bravery 0.0 = 0.5x
+        multiplier = 0.5 + (bravery * 1.5)
+        
+        self.drives[DriveType.PAIN].decay_rate = base_pain_decay * multiplier
+        self.drives[DriveType.FEAR].decay_rate = base_fear_decay * multiplier
+        
     def get_state(self) -> Dict:
         """Get brainstem state for debugging/display."""
         return {

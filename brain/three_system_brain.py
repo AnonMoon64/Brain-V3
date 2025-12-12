@@ -61,6 +61,10 @@ from .signal_processing import RobustInputPipeline as SignalProcessor
 from .hierarchical_time import HierarchicalTimeManager, TemporalScale
 from .neuromodulation import KineticNeuromodulationSystem, ModulatorType
 from .language_decoder import NeuralLanguageDecoder
+from .consolidation import (
+    ChemicalTaggingSystem, ConsolidationEngine, InheritedMemoryInstaller,
+    SleepManager, MarkerType, create_consolidation_system
+)
 
 
 # =============================================================================
@@ -804,6 +808,17 @@ class SelfCompressionEngine:
                 created_new = True
         
         return idx, 1.0 - similarity, created_new
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get compression statistics."""
+        return {
+            'compression_ratio': self.compression_ratio,
+            'bits_saved': self.bits_saved,
+            'num_cortical_primitives': len(self.cortical_primitives),
+            'num_reservoir_modes': len(self.reservoir_modes),
+            'num_concepts': len(self.semantic_concepts)
+        }
+
     
     def compress_semantic(self, text: str, embedding: List[float]) -> Tuple[str, float, bool]:
         """
@@ -832,15 +847,43 @@ class SelfCompressionEngine:
         
         return best_concept, 1.0 - best_sim, created_new
     
-    def get_stats(self) -> Dict[str, Any]:
-        """Get compression statistics."""
+
+
+    def get_snapshot(self) -> Dict[str, Any]:
+        """
+        Get structural snapshot for inheritance.
+        
+        Returns:
+            Dict containing primitives and modes.
+        """
         return {
-            'cortical_primitives': len(self.cortical_primitives),
-            'reservoir_modes': len(self.reservoir_modes),
-            'semantic_concepts': len(self.semantic_concepts),
-            'bits_saved': self.bits_saved,
-            'compression_ratio': self.compression_ratio
+            'cortical_primitives': [p.copy() for p in self.cortical_primitives],
+            'reservoir_modes': [m.copy() for m in self.reservoir_modes],
+            'semantic_concepts': {k: v.copy() for k, v in self.semantic_concepts.items()}
         }
+    
+    def load_snapshot(self, snapshot: Dict[str, Any]):
+        """
+        Load structural snapshot (e.g. from parent).
+        
+        Args:
+            snapshot: Dict from get_snapshot()
+        """
+        if not snapshot:
+            return
+            
+        # Copy primitives - limit to max
+        if 'cortical_primitives' in snapshot:
+            self.cortical_primitives = [p.copy() for p in snapshot['cortical_primitives'][:self.max_primitives]]
+            
+        if 'reservoir_modes' in snapshot:
+            self.reservoir_modes = [m.copy() for m in snapshot['reservoir_modes'][:self.max_primitives]]
+            
+        if 'semantic_concepts' in snapshot:
+            # Merge concepts
+            for k, v in snapshot['semantic_concepts'].items():
+                if len(self.semantic_concepts) < self.max_primitives:
+                    self.semantic_concepts[k] = v.copy()
 
 
 # =============================================================================
@@ -1036,6 +1079,700 @@ class InternalBody:
         self.energy = 1.0
         self.arousal = 0.5
         self.comfort = 0.7
+
+
+# =============================================================================
+# TIER 4: TOOL USE EMERGENCE
+# =============================================================================
+
+class ToolUseSystem:
+    """
+    Tool Use Emergence: Creatures learn to use objects as extensions of their body.
+    
+    Key principles:
+    - Tools are represented as extensions of body schema (proprioceptive incorporation)
+    - Success with a tool strengthens the neural pathway connecting action→tool→outcome
+    - Objects become "transparent" to the user when mastered (like a hammer becomes part of the arm)
+    - Failure weakens tool-action associations
+    
+    This is NOT hardcoded tool use - it emerges from motor-sensory loop learning.
+    """
+    
+    def __init__(self, max_tools: int = 20):
+        self.max_tools = max_tools
+        
+        # Tool representations: each tool has an embedding that can fuse with body schema
+        self.tool_embeddings: Dict[str, np.ndarray] = {}  # tool_id -> embedding (64-dim)
+        self.tool_familiarity: Dict[str, float] = {}  # How well we know each tool
+        self.tool_success_history: Dict[str, List[float]] = {}  # Recent success rates
+        
+        # Body schema extension - when holding a tool, proprioception extends
+        self.current_tool: Optional[str] = None
+        self.tool_incorporation_strength: float = 0.0  # How "part of body" the tool feels
+        
+        # Motor-tool binding: which motor patterns work with which tools
+        self.motor_tool_associations: Dict[str, np.ndarray] = {}  # tool_id -> motor pattern
+        
+        # Learning parameters
+        self.incorporation_rate = 0.1  # How fast tools become "part of body"
+        self.forgetting_rate = 0.01   # How fast unused tool skills decay
+        
+    def encounter_object(self, object_id: str, object_features: np.ndarray) -> Dict[str, Any]:
+        """
+        Encounter a new or known object that could be used as a tool.
+        
+        Args:
+            object_id: Unique identifier for the object
+            object_features: Feature vector describing the object
+            
+        Returns:
+            Recognition info and suggested motor patterns
+        """
+        # Initialize if new tool
+        if object_id not in self.tool_embeddings:
+            if len(self.tool_embeddings) >= self.max_tools:
+                # Remove least familiar tool
+                if self.tool_familiarity:
+                    weakest = min(self.tool_familiarity, key=self.tool_familiarity.get)
+                    del self.tool_embeddings[weakest]
+                    del self.tool_familiarity[weakest]
+                    if weakest in self.tool_success_history:
+                        del self.tool_success_history[weakest]
+                    if weakest in self.motor_tool_associations:
+                        del self.motor_tool_associations[weakest]
+            
+            # Create embedding (normalized)
+            embedding = object_features[:64] if len(object_features) >= 64 else np.zeros(64)
+            embedding = embedding / (np.linalg.norm(embedding) + 1e-8)
+            self.tool_embeddings[object_id] = embedding
+            self.tool_familiarity[object_id] = 0.0
+            self.tool_success_history[object_id] = []
+            self.motor_tool_associations[object_id] = np.random.randn(8) * 0.1  # Random motor pattern
+        
+        familiarity = self.tool_familiarity[object_id]
+        
+        return {
+            'is_known': familiarity > 0.1,
+            'familiarity': familiarity,
+            'suggested_motor_pattern': self.motor_tool_associations[object_id].copy(),
+            'success_rate': np.mean(self.tool_success_history[object_id][-10:]) if self.tool_success_history[object_id] else 0.0
+        }
+    
+    def grasp_tool(self, object_id: str) -> bool:
+        """
+        Attempt to grasp a tool, extending body schema.
+        
+        Returns: True if tool was grasped
+        """
+        if object_id not in self.tool_embeddings:
+            return False
+            
+        self.current_tool = object_id
+        self.tool_incorporation_strength = self.tool_familiarity.get(object_id, 0.0) * 0.5
+        
+        return True
+    
+    def release_tool(self):
+        """Release currently held tool."""
+        self.current_tool = None
+        self.tool_incorporation_strength = 0.0
+    
+    def use_tool(self, motor_command: np.ndarray, outcome_success: float) -> Dict[str, Any]:
+        """
+        Use current tool with motor command and learn from outcome.
+        
+        Args:
+            motor_command: 8-dim motor activation pattern
+            outcome_success: 0-1 success of the action
+            
+        Returns:
+            Learning result
+        """
+        if self.current_tool is None:
+            return {'error': 'no_tool_held'}
+        
+        tool_id = self.current_tool
+        
+        # Record success
+        self.tool_success_history[tool_id].append(outcome_success)
+        if len(self.tool_success_history[tool_id]) > 100:
+            self.tool_success_history[tool_id].pop(0)
+        
+        # Update familiarity based on use
+        delta_familiarity = self.incorporation_rate * (outcome_success - 0.3)  # Baseline at 0.3
+        self.tool_familiarity[tool_id] = np.clip(
+            self.tool_familiarity[tool_id] + delta_familiarity, 0.0, 1.0
+        )
+        
+        # Update motor-tool association (what motor patterns work with this tool)
+        # Hebbian-ish: if success, strengthen this motor pattern for this tool
+        learning_signal = (outcome_success - 0.5) * 2  # -1 to +1
+        self.motor_tool_associations[tool_id] += 0.1 * learning_signal * motor_command[:8]
+        self.motor_tool_associations[tool_id] = np.clip(
+            self.motor_tool_associations[tool_id], -1, 1
+        )
+        
+        # Update incorporation strength (tool becomes more "part of body")
+        if outcome_success > 0.5:
+            self.tool_incorporation_strength = min(
+                1.0, self.tool_incorporation_strength + self.incorporation_rate
+            )
+        
+        return {
+            'familiarity': self.tool_familiarity[tool_id],
+            'incorporation': self.tool_incorporation_strength,
+            'success_rate': np.mean(self.tool_success_history[tool_id][-10:])
+        }
+    
+    def get_extended_proprioception(self, base_proprioception: List[float]) -> List[float]:
+        """
+        Get proprioception extended by current tool.
+        
+        When holding a familiar tool, proprioception extends to include the tool.
+        """
+        if self.current_tool is None or self.tool_incorporation_strength < 0.1:
+            return base_proprioception
+        
+        # Tool extends proprioception - add virtual "limb" positions
+        tool_embedding = self.tool_embeddings[self.current_tool][:len(base_proprioception)]
+        
+        # Blend tool embedding with proprioception based on incorporation
+        extended = []
+        for i, p in enumerate(base_proprioception):
+            if i < len(tool_embedding):
+                # More incorporated = more the tool feels like part of body
+                blended = p + self.tool_incorporation_strength * tool_embedding[i] * 0.3
+                extended.append(np.clip(blended, 0, 1))
+            else:
+                extended.append(p)
+        
+        return extended
+    
+    def decay_unused_tools(self):
+        """Decay familiarity with unused tools over time."""
+        for tool_id in list(self.tool_familiarity.keys()):
+            if tool_id != self.current_tool:
+                self.tool_familiarity[tool_id] = max(
+                    0.0, self.tool_familiarity[tool_id] - self.forgetting_rate
+                )
+    
+    def get_state(self) -> Dict[str, Any]:
+        """Get complete tool use system state."""
+        return {
+            'current_tool': self.current_tool,
+            'incorporation_strength': self.tool_incorporation_strength,
+            'known_tools': list(self.tool_embeddings.keys()),
+            'tool_familiarity': dict(self.tool_familiarity),
+            'num_tools': len(self.tool_embeddings)
+        }
+
+
+# =============================================================================
+# TIER 4: ABSTRACT REASONING
+# =============================================================================
+
+class AbstractReasoningSystem:
+    """
+    Abstract Reasoning: Pattern recognition and analogical thinking.
+    
+    Key principles:
+    - Patterns are discovered through compression (SelfCompressionEngine)
+    - Analogies map relationships between pattern domains
+    - Reasoning emerges from reservoir dynamics, not symbolic rules
+    - "If A:B :: C:?" solved by finding D that completes relationship
+    
+    This creates genuine abstraction through structure, not hardcoded logic.
+    """
+    
+    def __init__(self, pattern_dim: int = 64, max_concepts: int = 100):
+        self.pattern_dim = pattern_dim
+        self.max_concepts = max_concepts
+        
+        # Abstract concepts - discovered patterns
+        self.concepts: Dict[str, np.ndarray] = {}  # concept_id -> embedding
+        self.concept_relations: Dict[Tuple[str, str], np.ndarray] = {}  # (A,B) -> relationship vector
+        self.concept_usage: Dict[str, int] = {}  # How often each concept is activated
+        
+        # Analogy history - successful analogies strengthen pathways
+        self.analogy_history: List[Dict[str, Any]] = []
+        
+        # Pattern detection state
+        self.active_patterns: List[np.ndarray] = []
+        self.pattern_buffer_size = 50
+        
+    def observe_pattern(self, activation: np.ndarray, context: str = "") -> Dict[str, Any]:
+        """
+        Observe an activation pattern and potentially discover concepts.
+        
+        Args:
+            activation: Neural activation pattern
+            context: Optional context string
+            
+        Returns:
+            Recognition and concept discovery info
+        """
+        # Normalize to pattern_dim
+        if len(activation) > self.pattern_dim:
+            pattern = activation[:self.pattern_dim]
+        else:
+            pattern = np.zeros(self.pattern_dim)
+            pattern[:len(activation)] = activation
+        pattern = pattern / (np.linalg.norm(pattern) + 1e-8)
+        
+        # Add to buffer
+        self.active_patterns.append(pattern)
+        if len(self.active_patterns) > self.pattern_buffer_size:
+            self.active_patterns.pop(0)
+        
+        # Check similarity to known concepts
+        best_match = None
+        best_similarity = 0.0
+        
+        for concept_id, concept_vec in self.concepts.items():
+            similarity = float(np.dot(pattern, concept_vec))
+            if similarity > best_similarity:
+                best_similarity = similarity
+                best_match = concept_id
+        
+        result = {
+            'recognized': best_similarity > 0.7,
+            'best_match': best_match,
+            'similarity': best_similarity,
+            'new_concept': False
+        }
+        
+        # If not recognized, potentially create new concept
+        if best_similarity < 0.5 and len(self.concepts) < self.max_concepts:
+            # Check if this pattern recurs in buffer
+            recurring = self._check_pattern_recurrence(pattern)
+            if recurring > 2:  # Pattern appeared 3+ times
+                concept_id = f"concept_{len(self.concepts)}"
+                self.concepts[concept_id] = pattern.copy()
+                self.concept_usage[concept_id] = recurring
+                result['new_concept'] = True
+                result['created_concept'] = concept_id
+        
+        # Update usage of matched concept
+        if best_match and best_similarity > 0.7:
+            self.concept_usage[best_match] = self.concept_usage.get(best_match, 0) + 1
+        
+        return result
+    
+    def _check_pattern_recurrence(self, pattern: np.ndarray, threshold: float = 0.8) -> int:
+        """Count how many times this pattern appears in buffer."""
+        count = 0
+        for p in self.active_patterns:
+            if np.dot(pattern, p) > threshold:
+                count += 1
+        return count
+    
+    def learn_relationship(self, concept_a: str, concept_b: str, relationship_vec: Optional[np.ndarray] = None) -> bool:
+        """
+        Learn a relationship between two concepts.
+        
+        If relationship_vec is None, compute it as B - A (vector difference).
+        """
+        if concept_a not in self.concepts or concept_b not in self.concepts:
+            return False
+        
+        if relationship_vec is None:
+            # Relationship is the transformation from A to B
+            relationship_vec = self.concepts[concept_b] - self.concepts[concept_a]
+        
+        self.concept_relations[(concept_a, concept_b)] = relationship_vec.copy()
+        return True
+    
+    def solve_analogy(self, concept_a: str, concept_b: str, concept_c: str) -> Tuple[Optional[str], float]:
+        """
+        Solve: A:B :: C:?
+        
+        Find the concept D such that the relationship A→B matches C→D.
+        
+        Returns:
+            (concept_d, confidence) or (None, 0.0) if no solution found
+        """
+        if concept_a not in self.concepts or concept_b not in self.concepts or concept_c not in self.concepts:
+            return None, 0.0
+        
+        # Get or compute the A→B relationship
+        if (concept_a, concept_b) in self.concept_relations:
+            relationship = self.concept_relations[(concept_a, concept_b)]
+        else:
+            relationship = self.concepts[concept_b] - self.concepts[concept_a]
+        
+        # Apply relationship to C to predict D
+        predicted_d = self.concepts[concept_c] + relationship
+        predicted_d = predicted_d / (np.linalg.norm(predicted_d) + 1e-8)
+        
+        # Find closest concept to predicted_d
+        best_match = None
+        best_similarity = 0.0
+        
+        for concept_id, concept_vec in self.concepts.items():
+            if concept_id == concept_c:
+                continue  # D shouldn't be C
+            similarity = float(np.dot(predicted_d, concept_vec))
+            if similarity > best_similarity:
+                best_similarity = similarity
+                best_match = concept_id
+        
+        # Record successful analogies
+        if best_match and best_similarity > 0.6:
+            self.analogy_history.append({
+                'A': concept_a, 'B': concept_b, 
+                'C': concept_c, 'D': best_match,
+                'confidence': best_similarity
+            })
+            if len(self.analogy_history) > 100:
+                self.analogy_history.pop(0)
+        
+        return best_match, best_similarity
+    
+    def abstract_rule_detection(self) -> List[Dict[str, Any]]:
+        """
+        Detect abstract rules from relationship patterns.
+        
+        Looks for relationships that appear multiple times across different concepts.
+        """
+        if len(self.concept_relations) < 3:
+            return []
+        
+        # Cluster relationships
+        relationships = list(self.concept_relations.values())
+        detected_rules = []
+        
+        # Simple clustering: find similar relationships
+        for i, rel_i in enumerate(relationships):
+            similar_count = 0
+            for j, rel_j in enumerate(relationships):
+                if i != j:
+                    similarity = np.dot(rel_i, rel_j) / (np.linalg.norm(rel_i) * np.linalg.norm(rel_j) + 1e-8)
+                    if similarity > 0.7:
+                        similar_count += 1
+            
+            if similar_count >= 2:  # This relationship pattern appears 3+ times
+                rule_name = f"rule_{len(detected_rules)}"
+                detected_rules.append({
+                    'rule_id': rule_name,
+                    'relationship_vector': rel_i.copy(),
+                    'occurrences': similar_count + 1
+                })
+        
+        return detected_rules
+    
+    def prune_unused_concepts(self, min_usage: int = 2):
+        """Remove concepts that are rarely used."""
+        to_remove = [c for c, count in self.concept_usage.items() if count < min_usage]
+        for c in to_remove:
+            del self.concepts[c]
+            del self.concept_usage[c]
+            # Remove relationships involving this concept
+            self.concept_relations = {
+                k: v for k, v in self.concept_relations.items()
+                if c not in k
+            }
+    
+    def get_state(self) -> Dict[str, Any]:
+        """Get complete abstract reasoning state."""
+        return {
+            'num_concepts': len(self.concepts),
+            'num_relationships': len(self.concept_relations),
+            'num_rules': len(self.abstract_rule_detection()),
+            'concept_usage': dict(self.concept_usage),
+            'recent_analogies': self.analogy_history[-5:]
+        }
+
+
+# =============================================================================
+# TIER 4: SOCIAL STRUCTURES
+# =============================================================================
+
+class SocialStructureSystem:
+    """
+    Social Structures: Emergent hierarchy, cooperation, and resource sharing.
+    
+    Key principles:
+    - Social rank emerges from interaction outcomes, not assignment
+    - Cooperation happens when mutual benefit is predicted
+    - Resource sharing influenced by oxytocin levels
+    - Groups form naturally through repeated positive interactions
+    
+    Individual brains don't store group structure - it's distributed across interactions.
+    """
+    
+    def __init__(self, max_relationships: int = 50):
+        self.max_relationships = max_relationships
+        
+        # Relationship memory: how we relate to other agents
+        # Values: affinity (-1 to +1), dominance (-1 to +1), trust (0 to 1)
+        self.relationships: Dict[str, Dict[str, float]] = {}
+        
+        # Interaction history per agent
+        self.interaction_history: Dict[str, List[Dict[str, Any]]] = {}
+        
+        # Group memberships (emergent)
+        self.groups: Dict[str, Set[str]] = {}  # group_id -> set of agent_ids
+        self.my_groups: Set[str] = set()
+        
+        # Resource sharing state
+        self.shared_resources: Dict[str, float] = {}  # resource_id -> amount shared
+        self.received_resources: Dict[str, float] = {}  # resource_id -> amount received
+        
+        # Cooperation prediction model (simple linear)
+        self.cooperation_weights = np.random.randn(5) * 0.1  # Features: affinity, dominance, trust, oxytocin, history
+        
+    def observe_agent(self, agent_id: str, features: Optional[np.ndarray] = None) -> Dict[str, Any]:
+        """
+        Observe another agent, initializing relationship if new.
+        
+        Args:
+            agent_id: Unique identifier for the other agent
+            features: Optional feature vector describing the agent
+            
+        Returns:
+            Relationship info and social recommendations
+        """
+        if agent_id not in self.relationships:
+            if len(self.relationships) >= self.max_relationships:
+                # Remove weakest relationship
+                weakest = min(
+                    self.relationships.keys(),
+                    key=lambda a: abs(self.relationships[a].get('affinity', 0))
+                )
+                del self.relationships[weakest]
+                if weakest in self.interaction_history:
+                    del self.interaction_history[weakest]
+            
+            # Initialize new relationship (neutral)
+            self.relationships[agent_id] = {
+                'affinity': 0.0,       # Like/dislike
+                'dominance': 0.0,      # Relative status (+ = I'm dominant)
+                'trust': 0.3,          # How much I trust them
+                'familiarity': 0.0,    # How well I know them
+            }
+            self.interaction_history[agent_id] = []
+        
+        rel = self.relationships[agent_id]
+        
+        # Predict cooperation likelihood
+        coop_features = np.array([
+            rel['affinity'],
+            rel['dominance'],
+            rel['trust'],
+            0.5,  # Placeholder for oxytocin (will be filled in by brain)
+            len(self.interaction_history.get(agent_id, [])) / 10.0
+        ])
+        coop_prediction = float(np.tanh(np.dot(self.cooperation_weights, coop_features)))
+        
+        return {
+            'known': rel['familiarity'] > 0.1,
+            'relationship': dict(rel),
+            'cooperation_likelihood': (coop_prediction + 1) / 2,  # 0-1 scale
+            'shared_groups': self._get_shared_groups(agent_id)
+        }
+    
+    def _get_shared_groups(self, agent_id: str) -> List[str]:
+        """Get groups shared with another agent."""
+        shared = []
+        for group_id, members in self.groups.items():
+            if agent_id in members and group_id in self.my_groups:
+                shared.append(group_id)
+        return shared
+    
+    def record_interaction(
+        self, 
+        agent_id: str, 
+        interaction_type: str,  # "cooperation", "competition", "neutral", "conflict"
+        outcome: float,  # -1 to +1 (my perspective)
+        their_outcome: float = 0.0  # -1 to +1 (their perspective)
+    ) -> Dict[str, Any]:
+        """
+        Record an interaction with another agent and update relationship.
+        
+        Returns:
+            Updated relationship state
+        """
+        if agent_id not in self.relationships:
+            self.observe_agent(agent_id)
+        
+        rel = self.relationships[agent_id]
+        history = self.interaction_history.setdefault(agent_id, [])
+        
+        # Record interaction
+        interaction = {
+            'type': interaction_type,
+            'outcome': outcome,
+            'their_outcome': their_outcome
+        }
+        history.append(interaction)
+        if len(history) > 50:
+            history.pop(0)
+        
+        # Update relationship based on interaction
+        learning_rate = 0.2
+        
+        # Affinity: increases with mutual benefit, decreases with conflict
+        mutual_benefit = (outcome + their_outcome) / 2
+        if interaction_type == "cooperation":
+            rel['affinity'] += learning_rate * (0.3 + mutual_benefit * 0.2)
+        elif interaction_type == "conflict":
+            rel['affinity'] -= learning_rate * 0.3
+        else:
+            rel['affinity'] += learning_rate * outcome * 0.1
+        rel['affinity'] = np.clip(rel['affinity'], -1, 1)
+        
+        # Dominance: winning increases, losing decreases
+        if interaction_type == "competition":
+            rel['dominance'] += learning_rate * (outcome - their_outcome) * 0.3
+        elif interaction_type == "conflict":
+            rel['dominance'] += learning_rate * outcome * 0.2
+        rel['dominance'] = np.clip(rel['dominance'], -1, 1)
+        
+        # Trust: builds slowly with positive outcomes, breaks quickly with betrayal
+        if outcome > 0:
+            rel['trust'] += learning_rate * 0.1
+        elif outcome < -0.5 and interaction_type == "cooperation":
+            # Betrayal - they defected in cooperation
+            rel['trust'] -= learning_rate * 0.5
+        elif outcome < 0:
+            rel['trust'] -= learning_rate * 0.1
+        rel['trust'] = np.clip(rel['trust'], 0, 1)
+        
+        # Familiarity always increases with interaction
+        rel['familiarity'] = min(1.0, rel['familiarity'] + 0.05)
+        
+        # Update cooperation prediction weights (simple reinforcement)
+        if interaction_type == "cooperation":
+            # If cooperation succeeded, strengthen weights that predicted it
+            coop_features = np.array([
+                rel['affinity'], rel['dominance'], rel['trust'], 0.5, len(history) / 10.0
+            ])
+            error = outcome - np.tanh(np.dot(self.cooperation_weights, coop_features))
+            self.cooperation_weights += 0.01 * error * coop_features
+        
+        return {'relationship': dict(rel)}
+    
+    def propose_cooperation(self, agent_id: str, resource_value: float = 0.5) -> Dict[str, Any]:
+        """
+        Propose cooperation with another agent.
+        
+        Returns predicted outcomes and whether to proceed.
+        """
+        if agent_id not in self.relationships:
+            return {'should_cooperate': False, 'reason': 'unknown_agent'}
+        
+        rel = self.relationships[agent_id]
+        
+        # Decision based on trust and affinity
+        trust_threshold = 0.3 - resource_value * 0.2  # Higher stakes = need more trust
+        affinity_threshold = -0.3
+        
+        should_cooperate = rel['trust'] > trust_threshold and rel['affinity'] > affinity_threshold
+        
+        # Expected outcome
+        expected_outcome = rel['trust'] * 0.5 + rel['affinity'] * 0.3
+        
+        return {
+            'should_cooperate': should_cooperate,
+            'expected_outcome': expected_outcome,
+            'trust': rel['trust'],
+            'affinity': rel['affinity'],
+            'reason': 'trust_and_affinity' if should_cooperate else 'insufficient_trust'
+        }
+    
+    def share_resource(self, agent_id: str, resource_id: str, amount: float, oxytocin_level: float = 0.5) -> Dict[str, Any]:
+        """
+        Share a resource with another agent.
+        
+        Sharing is modulated by oxytocin and relationship quality.
+        """
+        if agent_id not in self.relationships:
+            self.observe_agent(agent_id)
+        
+        rel = self.relationships[agent_id]
+        
+        # Willingness to share based on oxytocin and affinity
+        share_willingness = 0.3 + oxytocin_level * 0.4 + rel['affinity'] * 0.3
+        share_willingness = np.clip(share_willingness, 0, 1)
+        
+        # Actual amount shared
+        actual_amount = amount * share_willingness
+        
+        # Record sharing
+        self.shared_resources[resource_id] = self.shared_resources.get(resource_id, 0) + actual_amount
+        
+        # Sharing builds affinity and trust
+        rel['affinity'] += 0.05 * actual_amount
+        rel['trust'] += 0.02 * actual_amount
+        rel['affinity'] = np.clip(rel['affinity'], -1, 1)
+        rel['trust'] = np.clip(rel['trust'], 0, 1)
+        
+        return {
+            'amount_shared': actual_amount,
+            'willingness': share_willingness,
+            'relationship_updated': dict(rel)
+        }
+    
+    def form_group(self, group_id: str, initial_members: List[str]) -> bool:
+        """Form or join a group with other agents."""
+        if group_id not in self.groups:
+            self.groups[group_id] = set()
+        
+        self.groups[group_id].update(initial_members)
+        self.my_groups.add(group_id)
+        
+        # Being in a group increases affinity between members
+        for member in initial_members:
+            if member in self.relationships:
+                self.relationships[member]['affinity'] += 0.1
+                self.relationships[member]['affinity'] = min(1.0, self.relationships[member]['affinity'])
+        
+        return True
+    
+    def get_social_hierarchy(self) -> List[Tuple[str, float]]:
+        """
+        Get perceived social hierarchy based on dominance relationships.
+        
+        Returns list of (agent_id, relative_rank) sorted by rank.
+        """
+        if not self.relationships:
+            return [('self', 0.0)]
+        
+        # Compute relative ranks
+        my_rank = 0.0  # Self is reference point
+        ranks = [('self', my_rank)]
+        
+        for agent_id, rel in self.relationships.items():
+            # Their rank relative to me (negative dominance means they're higher)
+            their_rank = -rel['dominance']
+            ranks.append((agent_id, their_rank))
+        
+        # Sort by rank (higher rank = more dominant)
+        ranks.sort(key=lambda x: x[1], reverse=True)
+        return ranks
+    
+    def decay_relationships(self):
+        """Decay relationships that aren't maintained."""
+        for agent_id in list(self.relationships.keys()):
+            rel = self.relationships[agent_id]
+            # Affinity decays toward neutral
+            rel['affinity'] *= 0.99
+            # Trust decays slowly
+            rel['trust'] = max(0.2, rel['trust'] * 0.995)  # Min baseline trust
+            # Dominance is more stable
+            rel['dominance'] *= 0.999
+    
+    def get_state(self) -> Dict[str, Any]:
+        """Get complete social structure state."""
+        return {
+            'num_relationships': len(self.relationships),
+            'num_groups': len(self.my_groups),
+            'hierarchy': self.get_social_hierarchy()[:5],
+            'avg_affinity': np.mean([r['affinity'] for r in self.relationships.values()]) if self.relationships else 0,
+            'avg_trust': np.mean([r['trust'] for r in self.relationships.values()]) if self.relationships else 0.3,
+            'total_shared': sum(self.shared_resources.values()),
+            'total_received': sum(self.received_resources.values())
+        }
 
 
 # =============================================================================
@@ -1500,8 +2237,33 @@ class SparseCorticalEngine:
         return self.activation.copy()
 
     def get_prediction_confidence(self) -> float:
-        """Get confidence based on prediction error."""
-        return 1.0 - np.clip(np.mean(np.abs(self.prediction_error)), 0, 1)
+        """
+        Get confidence based on prediction error.
+        
+        Note: Since activation is sparse (2% non-zero), we measure prediction
+        accuracy on active neurons only, not the full array mean.
+        """
+        # Find active neurons (nonzero activation or prediction)
+        active_mask = (self.activation > 0.01) | (self.prediction > 0.01)
+        
+        if np.sum(active_mask) < 2:
+            # Very few active neurons - high novelty/low confidence
+            return 0.3
+            
+        # Measure error only on active region
+        active_error = np.abs(self.prediction_error[active_mask])
+        
+        # Also count how many predicted neurons didn't fire (missed predictions)
+        predicted = self.prediction > 0.1
+        actually_active = self.activation > 0.01
+        misses = np.sum(predicted & ~actually_active)
+        miss_rate = misses / max(1, np.sum(predicted))
+        
+        # Combine mean error with miss rate
+        error_rate = np.mean(active_error) if len(active_error) > 0 else 0.5
+        combined_error = 0.7 * error_rate + 0.3 * miss_rate
+        
+        return float(1.0 - np.clip(combined_error, 0, 1))
 
     def get_state(self) -> Dict[str, Any]:
         """Get complete cortical state."""
@@ -1822,7 +2584,13 @@ class DynamicRecurrentCore:
         Returns:
             List of imagined outputs
         """
-        state = seed.copy() if len(seed) == self.reservoir_size else self.state.copy()
+        # Handle None seed
+        if seed is None:
+            state = self.state.copy()
+        elif len(seed) == self.reservoir_size:
+            state = seed.copy()
+        else:
+            state = self.state.copy()
 
         outputs = []
         for _ in range(steps):
@@ -1841,23 +2609,6 @@ class DynamicRecurrentCore:
             return np.zeros(self.reservoir_size)
 
         # Weighted sum of memory (recent more important)
-        weights = np.linspace(0.5, 1.0, len(self.memory_buffer))
-        weighted = np.average(self.memory_buffer, axis=0, weights=weights)
-        return weighted
-
-    def get_state(self) -> Dict[str, Any]:
-        """Get complete reservoir state."""
-        return {
-            'state': self.state.copy(),
-            'fast_state': self.fast_state.copy(),
-            'slow_state': self.slow_state.copy(),
-            'output': self.last_output.copy(),
-            'memory_buffer_size': len(self.memory_buffer),
-            'history_size': len(self.state_history)
-        }
-
-
-# =============================================================================
 # SYSTEM 3: NEUROMODULATED LEARNING SYSTEM
 # =============================================================================
 
@@ -1930,9 +2681,9 @@ class NeuromodulatedLearningSystem:
         self._num_neurons = num_neurons
 
         # Neurogenesis control
-        self.novelty_threshold = 0.2  # Lowered from 0.3 for more neurogenesis
-        self.neurogenesis_rate = 0.5   # Increased from 0.2
-        self.pruning_threshold = 0.001
+        self.novelty_threshold = 0.15  # Lowered from 0.2 for more neurogenesis
+        self.neurogenesis_rate = 0.7   # Increased from 0.5
+        self.pruning_threshold = 0.002  # Slightly higher for more aggressive pruning
 
         # Track neurons created/pruned
         self.neurons_created = 0
@@ -2021,10 +2772,11 @@ class NeuromodulatedLearningSystem:
             cortisol = self.neuromod.simple_chemicals.get(ModulatorType.CORTISOL, 0.3)
 
         # Neurogenesis probability: high novelty + high dopamine + low cortisol
-        prob = novelty * (0.5 + dopamine) * (1 - cortisol * 0.3)
+        # TUNED: More aggressive for visible learning
+        prob = novelty * (0.7 + dopamine) * (1 - cortisol * 0.2)
 
         if novelty > self.novelty_threshold and np.random.random() < prob * self.neurogenesis_rate:
-            num_new = np.random.randint(1, 6)
+            num_new = np.random.randint(1, 4)  # 1-3 new columns
             self.neurons_created += num_new
             return True, num_new
 
@@ -2282,6 +3034,59 @@ class ThreeSystemBrain:
         
         # Binary reservoir (optional, for potato mode)
         self.binary_reservoir = None  # Lazy init if needed
+
+        # =====================================================================
+        # NSM: Neural Sleep & Memory Consolidation System
+        # =====================================================================
+        print("  [NSM] Neural Consolidation System...")
+        
+        # Chemical tagging for synapses (cortex feedforward weights)
+        ff_shape = self.cortex.ff_weights.shape
+        self.cortex_tagging = ChemicalTaggingSystem(ff_shape)
+        
+        # Consolidation engine for sleep processing
+        self.consolidation_engine = ConsolidationEngine()
+        
+        # Memory installer for inheritance
+        self.memory_installer = InheritedMemoryInstaller()
+        
+        # Sleep manager
+        self.sleep_manager = SleepManager()
+        
+        # Track active synapses for tagging
+        self.last_active_synapses = np.zeros(ff_shape, dtype=bool)
+        
+        # Creature age (for plasticity calculation)
+        self.creature_age = 0.0  # 0-1 normalized
+        
+        # =====================================================================
+        # TIER 2: Predictive Minds - Pain Prediction System
+        # =====================================================================
+        print("  [TIER 2] Predictive Pain Avoidance...")
+        
+        # Pain prediction: learns to anticipate pain from sensory patterns
+        # Maps cortical activation patterns to predicted pain level
+        self.pain_predictor_weights = np.zeros(num_columns)  # Linear predictor
+        self.pain_prediction_history = []  # (cortical_pattern, actual_pain) pairs
+        self.max_pain_history = 100
+        self.pain_prediction_learning_rate = 0.1
+        self.last_pain_prediction = 0.0
+        self.predicted_pain_threshold = 0.3  # Threshold to trigger avoidance
+
+        # =====================================================================
+        # TIER 4: Higher Cognition Systems
+        # =====================================================================
+        print("  [TIER 4] Tool Use System...")
+        self.tool_system = ToolUseSystem(max_tools=20)
+        
+        print("  [TIER 4] Abstract Reasoning...")
+        self.reasoning_system = AbstractReasoningSystem(
+            pattern_dim=min(64, num_columns),
+            max_concepts=100
+        )
+        
+        print("  [TIER 4] Social Structures...")
+        self.social_system = SocialStructureSystem(max_relationships=50)
 
         # Current state
         self.step_count = 0
@@ -2872,6 +3677,12 @@ class ThreeSystemBrain:
         # =====================================================================
         self.last_cortical_output = cortical_activation
         self.last_reservoir_output = reservoir_output
+        
+        # TIER 4: Update higher cognition systems
+        try:
+            self.tier4_update()
+        except Exception:
+            pass  # Fail silently to not break core processing
 
         # =====================================================================
         # STEP 7: Compile results
@@ -3004,6 +3815,127 @@ class ThreeSystemBrain:
             'step_count': self.step_count,
             'current_time': self.current_time
         }
+
+    def get_structural_snapshot(self) -> Dict[str, Any]:
+        """
+        Get structural memory snapshot for inheritance.
+        
+        Extracts "Instinct Packets":
+        1. Learned primitives (SelfCompressionEngine)
+        2. Key concept embeddings
+        3. Cortical feedforward weights (neural topology)
+        4. Lateral inhibition patterns
+        5. Reservoir structure (optional, for advanced inheritance)
+        6. Pain predictor weights (TIER 2: Predictive Minds)
+        """
+        snapshot = {
+            'version': '2.1',
+            'compression_engine': {},
+            'evolved_modules': 0,
+            # Neural topology (NSM inheritance)
+            'ff_weights': self.cortex.ff_weights.copy(),
+            'lateral_weights': self.cortex.lateral_weights.copy(),
+            'fb_weights': self.cortex.fb_weights.copy(),
+            # Stability info (which connections are consolidated)
+            'stability': self.cortex_tagging.stability.copy() if hasattr(self, 'cortex_tagging') else None,
+            # Reservoir (optional - heavier)
+            'reservoir_W': self.reservoir.W_reservoir.copy() if hasattr(self.reservoir, 'W_reservoir') else None,
+            # TIER 2: Pain predictor weights (learned danger associations)
+            'pain_predictor': self.pain_predictor_weights.copy() if hasattr(self, 'pain_predictor_weights') else None,
+        }
+        
+        # 1. Structural Primitives (The "Alphabet" of thought)
+        if hasattr(self, 'compression'):
+            snapshot['compression_engine'] = self.compression.get_snapshot()
+        elif hasattr(self, 'compression_engine'):
+            snapshot['compression_engine'] = self.compression_engine.get_snapshot()
+            
+        return snapshot
+        
+    def load_structural_snapshot(self, snapshot: Dict[str, Any], mutation_rate: float = 0.1):
+        """
+        Load structural memory from snapshot (Inheritance).
+        
+        Args:
+            snapshot: Structure from parent(s)
+            mutation_rate: Rate of random mutations during inheritance (0-1)
+        """
+        if not snapshot:
+            return
+        
+        version = snapshot.get('version', '1.0')
+        
+        # NSM v2.0: Full neural topology inheritance
+        if version >= '2.0' and 'ff_weights' in snapshot:
+            parent_ff = snapshot['ff_weights']
+            parent_lateral = snapshot.get('lateral_weights')
+            parent_fb = snapshot.get('fb_weights')
+            parent_stability = snapshot.get('stability')
+            
+            # Use memory installer for proper inheritance with mutation
+            if hasattr(self, 'memory_installer') and hasattr(self, 'cortex_tagging'):
+                # Install inherited patterns at reduced strength
+                self.cortex.ff_weights = self.memory_installer.install_inherited_patterns(
+                    self.cortex.ff_weights,
+                    parent_ff,
+                    self.cortex_tagging,
+                    mutation_rate=mutation_rate
+                )
+                
+                # Also inherit lateral weights with mutation
+                if parent_lateral is not None:
+                    inherited_lateral = parent_lateral * 0.3  # Reduced strength
+                    mutation_mask = np.random.random(inherited_lateral.shape) < mutation_rate
+                    inherited_lateral[mutation_mask] += np.random.randn(np.sum(mutation_mask)) * 0.1
+                    
+                    # Blend into child
+                    blend_mask = np.abs(self.cortex.lateral_weights) < 0.01
+                    self.cortex.lateral_weights[blend_mask] = inherited_lateral[blend_mask]
+                
+                # Copy stability info if available
+                if parent_stability is not None and hasattr(self, 'cortex_tagging'):
+                    # Inherited stability is reduced (child needs to prove the connections)
+                    inherited_stability = parent_stability * 0.5
+                    self.cortex_tagging.stability = np.maximum(
+                        self.cortex_tagging.stability,
+                        inherited_stability[:self.cortex_tagging.shape[0], :self.cortex_tagging.shape[1]]
+                    )
+                
+                print(f"[NSM] Inherited neural topology: "
+                      f"{np.sum(np.abs(self.cortex.ff_weights) > 0.01)} active synapses")
+            else:
+                # Fallback: direct copy at reduced strength
+                blend_factor = 0.3
+                self.cortex.ff_weights = (
+                    self.cortex.ff_weights * (1 - blend_factor) +
+                    parent_ff * blend_factor
+                )
+        
+        # TIER 2: Inherit pain predictor weights (learned danger associations)
+        if 'pain_predictor' in snapshot and snapshot['pain_predictor'] is not None:
+            parent_predictor = snapshot['pain_predictor']
+            if hasattr(self, 'pain_predictor_weights') and len(parent_predictor) == len(self.pain_predictor_weights):
+                # Inherit at reduced strength with mutation
+                inherited_predictor = parent_predictor * 0.5  # 50% strength
+                mutation_mask = np.random.random(len(inherited_predictor)) < mutation_rate
+                inherited_predictor[mutation_mask] += np.random.randn(np.sum(mutation_mask)) * 0.1
+                
+                # Blend with child's (likely zero) predictor
+                self.pain_predictor_weights = (
+                    self.pain_predictor_weights * 0.2 + 
+                    inherited_predictor * 0.8
+                )
+                print(f"[TIER 2] Inherited pain predictor: "
+                      f"mean weight = {np.mean(np.abs(self.pain_predictor_weights)):.3f}")
+        
+        # 1. Load Primitives (v1.0 and v2.0)
+        compression = getattr(self, 'compression', None) or getattr(self, 'compression_engine', None)
+        if 'compression_engine' in snapshot and compression:
+            compression.load_snapshot(snapshot['compression_engine'])
+            
+        # Log inheritance
+        n_primitives = len(snapshot.get('compression_engine', {}).get('cortical_primitives', []))
+        print(f"[NSM] Brain received structural memory: {n_primitives} primitives")
 
     def train(self, input_text: str, expected_response: str, 
                reward: float = 0.8) -> Dict[str, Any]:
@@ -3283,7 +4215,7 @@ class ThreeSystemBrain:
             'reservoir': {
                 'size': self.reservoir.reservoir_size,
                 'state_norm': float(np.linalg.norm(self.reservoir.state)) if hasattr(self.reservoir, 'state') else 0,
-                'memory_load': self.reservoir.get_state().get('memory_buffer_size', 0)
+                'memory_load': len(self.reservoir.memory_buffer)
             },
             'arbitration': getattr(self, 'last_arbitration', {}),
             'integrated_output_norm': getattr(self, 'last_integrated_norm', 0.0),
@@ -3310,13 +4242,311 @@ class ThreeSystemBrain:
                 'avg_column_age': float(np.mean(self.cortex.ages)) if hasattr(self.cortex, 'ages') else 0.0,
                 'low_usage_columns': int(np.sum(np.array(getattr(self.cortex, 'usage_counts', [])) < 2))
             },
+            # NSM: Sleep and consolidation stats
+            'nsm': {
+                'fatigue': self.sleep_manager.fatigue if hasattr(self, 'sleep_manager') else 0.0,
+                'is_sleeping': self.sleep_manager.is_sleeping if hasattr(self, 'sleep_manager') else False,
+                'consolidation_count': self.consolidation_engine.consolidation_count if hasattr(self, 'consolidation_engine') else 0,
+                'total_strengthened': self.consolidation_engine.total_strengthened if hasattr(self, 'consolidation_engine') else 0,
+                'total_pruned': self.consolidation_engine.total_pruned if hasattr(self, 'consolidation_engine') else 0,
+                'pending_experiences': len(self.cortex_tagging.experiences) if hasattr(self, 'cortex_tagging') else 0,
+            },
             # New simple counters for GUI
             'interactions': getattr(self, 'interaction_count', getattr(self.state, 'simulation_step', self.step_count)),
             'training_count': getattr(self, 'training_count', 0),
+            # TIER 4: Higher Cognition Stats
+            'tier4': {
+                'tool_use': self.tool_system.get_state() if hasattr(self, 'tool_system') else {},
+                'reasoning': self.reasoning_system.get_state() if hasattr(self, 'reasoning_system') else {},
+                'social': self.social_system.get_state() if hasattr(self, 'social_system') else {},
+            },
             # Metadata
             'step': self.step_count,
             'time': self.current_time,
             'fatigue': getattr(self.learning, 'fatigue', 0.0)
+        }
+    
+    # =========================================================================
+    # NSM: Neural Sleep & Memory Consolidation Methods
+    # =========================================================================
+    
+    def tag_reward(self, reward: float, context: str = ""):
+        """
+        Tag currently active synapses with a reward signal.
+        
+        Positive reward → dopamine marker (strengthen during sleep)
+        Negative reward → cortisol marker (weaken during sleep)
+        
+        Args:
+            reward: Reward signal (-1 to 1)
+            context: Optional description of what caused the reward
+        """
+        if not hasattr(self, 'cortex_tagging'):
+            return
+        
+        # Build active synapse mask from cortical activation
+        active_columns = self.last_cortical_output > 0.1
+        
+        # Create activation mask for ff_weights (which columns were activated)
+        active_mask = np.zeros(self.cortex.ff_weights.shape, dtype=bool)
+        for i, is_active in enumerate(active_columns):
+            if is_active and i < active_mask.shape[0]:
+                # Mark all input synapses to this column
+                active_mask[i, :] = True
+        
+        # Store for next tag
+        self.last_active_synapses = active_mask
+        
+        # Tag based on reward sign
+        strength = abs(reward)
+        if reward > 0.1:
+            self.cortex_tagging.tag_positive(active_mask, strength=strength, context=context)
+        elif reward < -0.1:
+            self.cortex_tagging.tag_negative(active_mask, strength=strength, context=context)
+    
+    def accumulate_fatigue(self, dt: float, cortisol_level: float = 0.0):
+        """
+        Accumulate neural fatigue from activity.
+        
+        High activity + high cortisol = faster fatigue.
+        """
+        if not hasattr(self, 'sleep_manager'):
+            return
+        
+        active_neurons = np.sum(self.last_cortical_output > 0.1)
+        self.sleep_manager.accumulate_fatigue(
+            dt=dt,
+            active_neurons=active_neurons,
+            cortisol_level=cortisol_level,
+            activity_level=self.body.arousal if hasattr(self.body, 'arousal') else 0.5
+        )
+    
+    def should_sleep(self) -> bool:
+        """Check if brain needs sleep for consolidation."""
+        if not hasattr(self, 'sleep_manager'):
+            return False
+        return self.sleep_manager.should_sleep()
+    
+    def enter_sleep(self):
+        """Enter sleep mode for consolidation."""
+        if hasattr(self, 'sleep_manager'):
+            self.sleep_manager.enter_sleep()
+    
+    def is_sleeping(self) -> bool:
+        """Check if currently sleeping."""
+        return hasattr(self, 'sleep_manager') and self.sleep_manager.is_sleeping
+    
+    def sleep_consolidation(self, sleep_duration: float = 1.0) -> Dict[str, Any]:
+        """
+        Perform sleep-based memory consolidation.
+        
+        This is the core NSM process:
+        1. Replay tagged experiences
+        2. Strengthen positive (dopamine) pathways
+        3. Weaken negative (cortisol) pathways
+        4. Prune unreinforced synapses
+        5. Stabilize consolidated connections
+        
+        Args:
+            sleep_duration: How long to simulate sleep
+            
+        Returns:
+            Dict with consolidation stats
+        """
+        if not hasattr(self, 'consolidation_engine') or not hasattr(self, 'cortex_tagging'):
+            return {'error': 'NSM not initialized'}
+        
+        # Enter sleep if not already
+        if hasattr(self, 'sleep_manager') and not self.sleep_manager.is_sleeping:
+            self.sleep_manager.enter_sleep()
+        
+        # IMPORTANT: Resize tagging to match current weight shape (may have changed due to pruning/neurogenesis)
+        current_shape = self.cortex.ff_weights.shape
+        if hasattr(self.cortex_tagging, 'resize'):
+            self.cortex_tagging.resize(current_shape)
+        
+        # Consolidate cortical weights
+        self.cortex.ff_weights, stats = self.consolidation_engine.consolidate(
+            weights=self.cortex.ff_weights,
+            tagging=self.cortex_tagging,
+            sleep_duration=sleep_duration,
+            age=self.creature_age,
+            replay_rate=5.0
+        )
+        
+        # Run dream/replay through reservoir
+        dream_summary = self._reservoir_driven_dream(steps=5)
+        
+        # Update sleep manager
+        if hasattr(self, 'sleep_manager'):
+            self.sleep_manager.sleep_tick(sleep_duration)
+            self.sleep_manager.wake_up()
+        
+        return {
+            'strengthened': stats['strengthened'],
+            'weakened': stats['weakened'],
+            'pruned': stats['pruned'],
+            'replayed': stats['replayed'],
+            'dream': dream_summary
+        }
+    
+    def interrupt_sleep(self):
+        """Interrupt sleep - lose consolidation progress."""
+        if hasattr(self, 'sleep_manager'):
+            self.sleep_manager.interrupt_sleep()
+    
+    def get_fatigue(self) -> float:
+        """Get current fatigue level."""
+        if hasattr(self, 'sleep_manager'):
+            return self.sleep_manager.fatigue
+        return 0.0
+    
+    def set_creature_age(self, age: float):
+        """Set creature age for plasticity calculations (0-1 normalized)."""
+        self.creature_age = np.clip(age, 0.0, 1.0)
+    
+    def set_metabolic_plasticity(self, metabolic_rate: float):
+        """
+        Adjust brain plasticity based on metabolic rate.
+        
+        High metabolism → faster learning, faster forgetting
+        Low metabolism → slower learning, better retention
+        
+        This implements the TIER 1: Metabolic Evolution feature:
+        metabolic rate affects how the brain learns and consolidates.
+        
+        Args:
+            metabolic_rate: Creature's metabolic rate (typically 0.5 - 2.0)
+        """
+        # Normalize to 0-2 range (1.0 is baseline)
+        normalized = np.clip(metabolic_rate, 0.5, 2.0)
+        
+        # High metabolism: more plasticity during wake, faster marker decay
+        # Low metabolism: less plasticity but better retention
+        
+        if hasattr(self, 'consolidation_engine'):
+            # Adjust consolidation strength based on metabolism
+            # High metabolism = stronger consolidation effect
+            self.consolidation_engine.POSITIVE_STRENGTHEN = 0.2 * normalized
+            self.consolidation_engine.NEGATIVE_WEAKEN = 0.2 * normalized
+        
+        if hasattr(self, 'cortex_tagging'):
+            # High metabolism = faster marker decay (need to act on memories sooner)
+            # Use custom decay rate: high metabolism = 0.95, low = 0.99
+            decay_rate = 1.0 - (0.05 * normalized)  # 0.95 - 0.99
+            self.cortex_tagging.decay_rate = decay_rate
+        
+        if hasattr(self, 'sleep_manager'):
+            # High metabolism = need more sleep for same fatigue
+            # (more neural activity = more fatigue per tick)
+            self.sleep_manager.BASE_FATIGUE_RATE = 0.01 * normalized
+            self.sleep_manager.NEURAL_FATIGUE_RATE = 0.001 * normalized
+    
+    # =========================================================================
+    # TIER 2: Predictive Minds - Pain Prediction Methods
+    # =========================================================================
+    
+    def predict_pain(self) -> float:
+        """
+        Predict pain based on current cortical activation.
+        
+        Uses learned associations between sensory patterns and subsequent pain.
+        
+        Returns:
+            Predicted pain level (0-1)
+        """
+        if not hasattr(self, 'pain_predictor_weights'):
+            return 0.0
+        
+        # Compute predicted pain from cortical activation
+        cortical = self.last_cortical_output
+        if len(cortical) != len(self.pain_predictor_weights):
+            return 0.0
+        
+        prediction = np.dot(self.pain_predictor_weights, cortical)
+        self.last_pain_prediction = np.clip(prediction, 0.0, 1.0)
+        return self.last_pain_prediction
+    
+    def update_pain_predictor(self, actual_pain: float):
+        """
+        Update pain predictor based on actual pain experienced.
+        
+        This is called after pain is experienced to train the predictor.
+        Uses simple delta learning rule.
+        
+        Args:
+            actual_pain: Actual pain level experienced (0-1)
+        """
+        if not hasattr(self, 'pain_predictor_weights'):
+            return
+        
+        cortical = self.last_cortical_output
+        if len(cortical) != len(self.pain_predictor_weights):
+            return
+        
+        # Delta rule: weights += learning_rate * (actual - predicted) * input
+        prediction_error = actual_pain - self.last_pain_prediction
+        
+        # Only learn from significant errors
+        if abs(prediction_error) > 0.05:
+            # Scale learning by cortical activation (active columns learn more)
+            update = self.pain_prediction_learning_rate * prediction_error * cortical
+            self.pain_predictor_weights += update
+            
+            # Regularization: keep weights bounded
+            self.pain_predictor_weights = np.clip(self.pain_predictor_weights, -2.0, 2.0)
+        
+        # Store for history (for analysis)
+        if len(self.pain_prediction_history) >= self.max_pain_history:
+            self.pain_prediction_history.pop(0)
+        self.pain_prediction_history.append((
+            self.last_pain_prediction,
+            actual_pain,
+            prediction_error
+        ))
+    
+    def should_avoid(self) -> bool:
+        """
+        Check if current sensory state predicts pain.
+        
+        Returns:
+            True if predicted pain exceeds avoidance threshold
+        """
+        prediction = self.predict_pain()
+        return prediction > self.predicted_pain_threshold
+    
+    def get_pain_prediction_stats(self) -> Dict[str, Any]:
+        """
+        Get statistics about pain prediction performance.
+        
+        Returns:
+            Dict with prediction accuracy and other stats
+        """
+        if not self.pain_prediction_history:
+            return {'accuracy': 0.0, 'samples': 0}
+        
+        # Calculate mean absolute error
+        errors = [abs(p - a) for p, a, _ in self.pain_prediction_history]
+        mae = np.mean(errors)
+        
+        # Calculate "accuracy" as 1 - MAE
+        accuracy = max(0.0, 1.0 - mae)
+        
+        # Count true positives/negatives
+        true_positives = sum(1 for p, a, _ in self.pain_prediction_history 
+                           if p > 0.3 and a > 0.3)
+        true_negatives = sum(1 for p, a, _ in self.pain_prediction_history 
+                           if p <= 0.3 and a <= 0.3)
+        total = len(self.pain_prediction_history)
+        
+        return {
+            'accuracy': accuracy,
+            'samples': total,
+            'mae': mae,
+            'true_positive_rate': true_positives / max(1, total),
+            'true_negative_rate': true_negatives / max(1, total),
+            'current_prediction': self.last_pain_prediction,
+            'weight_magnitude': float(np.mean(np.abs(self.pain_predictor_weights)))
         }
     
     def save(self, filepath: Optional[str] = None) -> str:
@@ -3336,6 +4566,174 @@ class ThreeSystemBrain:
             self._persistence = BrainPersistence()
         
         self._persistence.load(self, filepath)
+
+    # =========================================================================
+    # TIER 4: Tool Use Interface
+    # =========================================================================
+    
+    def encounter_tool(self, object_id: str, object_features: Optional[np.ndarray] = None) -> Dict[str, Any]:
+        """
+        Encounter an object that could be used as a tool.
+        
+        Args:
+            object_id: Unique identifier for the object
+            object_features: Optional feature vector (uses cortical activation if None)
+            
+        Returns:
+            Recognition info and suggested motor patterns
+        """
+        if object_features is None:
+            object_features = self.last_cortical_output
+        return self.tool_system.encounter_object(object_id, object_features)
+    
+    def use_tool_action(self, motor_command: np.ndarray, outcome_success: float) -> Dict[str, Any]:
+        """
+        Use current tool and learn from outcome.
+        
+        Args:
+            motor_command: Motor pattern used
+            outcome_success: 0-1 success of the action
+            
+        Returns:
+            Learning result with familiarity and incorporation
+        """
+        # Also update body with motor command
+        if hasattr(self, 'body'):
+            self.body.act(list(motor_command[:self.body.num_muscles]))
+        return self.tool_system.use_tool(motor_command, outcome_success)
+    
+    def grasp_tool(self, object_id: str) -> bool:
+        """Grasp a tool, extending body schema."""
+        return self.tool_system.grasp_tool(object_id)
+    
+    def release_tool(self):
+        """Release currently held tool."""
+        self.tool_system.release_tool()
+
+    # =========================================================================
+    # TIER 4: Abstract Reasoning Interface
+    # =========================================================================
+    
+    def observe_pattern(self, context: str = "") -> Dict[str, Any]:
+        """
+        Observe current cortical activation as a pattern for abstract reasoning.
+        
+        Args:
+            context: Optional context string
+            
+        Returns:
+            Recognition and concept discovery info
+        """
+        return self.reasoning_system.observe_pattern(self.last_cortical_output, context)
+    
+    def solve_analogy(self, concept_a: str, concept_b: str, concept_c: str) -> Tuple[Optional[str], float]:
+        """
+        Solve analogy: A is to B as C is to ?
+        
+        Returns:
+            (answer_concept, confidence) or (None, 0.0)
+        """
+        return self.reasoning_system.solve_analogy(concept_a, concept_b, concept_c)
+    
+    def get_abstract_concepts(self) -> Dict[str, Any]:
+        """Get discovered abstract concepts and rules."""
+        return {
+            'concepts': list(self.reasoning_system.concepts.keys()),
+            'rules': self.reasoning_system.abstract_rule_detection(),
+            'recent_analogies': self.reasoning_system.analogy_history[-5:]
+        }
+
+    # =========================================================================
+    # TIER 4: Social Structures Interface
+    # =========================================================================
+    
+    def observe_agent(self, agent_id: str, features: Optional[np.ndarray] = None) -> Dict[str, Any]:
+        """
+        Observe another agent, initializing or updating relationship.
+        
+        Args:
+            agent_id: Unique identifier for the other agent
+            features: Optional feature vector describing the agent
+            
+        Returns:
+            Relationship info and social recommendations
+        """
+        return self.social_system.observe_agent(agent_id, features)
+    
+    def social_interaction(
+        self, 
+        agent_id: str, 
+        interaction_type: str,
+        my_outcome: float,
+        their_outcome: float = 0.0
+    ) -> Dict[str, Any]:
+        """
+        Record a social interaction and update relationship.
+        
+        Args:
+            agent_id: The other agent
+            interaction_type: "cooperation", "competition", "neutral", "conflict"
+            my_outcome: My outcome (-1 to +1)
+            their_outcome: Their outcome (-1 to +1)
+            
+        Returns:
+            Updated relationship state
+        """
+        return self.social_system.record_interaction(agent_id, interaction_type, my_outcome, their_outcome)
+    
+    def propose_cooperation(self, agent_id: str, resource_value: float = 0.5) -> Dict[str, Any]:
+        """
+        Should I cooperate with this agent?
+        
+        Returns:
+            Decision and reasoning
+        """
+        return self.social_system.propose_cooperation(agent_id, resource_value)
+    
+    def share_resource(self, agent_id: str, resource_id: str, amount: float) -> Dict[str, Any]:
+        """
+        Share a resource with another agent (modulated by oxytocin).
+        
+        Args:
+            agent_id: Who to share with
+            resource_id: What resource
+            amount: How much to share
+            
+        Returns:
+            Sharing result
+        """
+        oxytocin = self.state.oxytocin_level
+        return self.social_system.share_resource(agent_id, resource_id, amount, oxytocin)
+    
+    def get_social_hierarchy(self) -> List[Tuple[str, float]]:
+        """Get perceived social hierarchy."""
+        return self.social_system.get_social_hierarchy()
+    
+    def form_group(self, group_id: str, members: List[str]) -> bool:
+        """Form or join a group."""
+        return self.social_system.form_group(group_id, members)
+
+    # =========================================================================
+    # TIER 4: Integrated Processing Hook
+    # =========================================================================
+    
+    def tier4_update(self):
+        """
+        Update TIER 4 systems as part of the processing loop.
+        
+        Called automatically during process() to maintain emergent higher cognition.
+        """
+        # Tool skills decay when not used
+        if hasattr(self, 'tool_system'):
+            self.tool_system.decay_unused_tools()
+        
+        # Observe current pattern for abstract reasoning
+        if hasattr(self, 'reasoning_system') and np.sum(self.last_cortical_output > 0.1) > 2:
+            self.reasoning_system.observe_pattern(self.last_cortical_output)
+        
+        # Decay social relationships over time
+        if hasattr(self, 'social_system'):
+            self.social_system.decay_relationships()
 
 
 # =============================================================================

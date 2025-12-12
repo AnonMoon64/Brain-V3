@@ -1,4 +1,8 @@
 {
+  "indexed_backgrounds": {
+    "0": "c:\\Users\\atomi\\Downloads\\Brain-V3\\images\\BackgroundForest.png",
+    "1": "C:/Users/atomi/Downloads/Brain-V3/images/green grass.jpg"
+  },
   "background_path": "c:\\Users\\atomi\\Downloads\\Brain-V3\\images\\BackgroundForest.png",
   "body_parts": {
     "full_body": {
@@ -11,7 +15,7 @@
         "dna_gene": "color_hue",
         "offset_x": 0,
         "offset_y": 0,
-        "scale": 0.2,
+        "scale": 0.5,
         "z_order": 0,
         "apply_hue": true,
         "apply_saturation": true,
@@ -26,7 +30,7 @@
         "dna_gene": "color_hue",
         "offset_x": 0,
         "offset_y": 0,
-        "scale": 0.2,
+        "scale": 0.5,
         "z_order": 0,
         "apply_hue": true,
         "apply_saturation": true,
@@ -41,7 +45,7 @@
         "dna_gene": "pattern_type",
         "offset_x": 0,
         "offset_y": 0,
-        "scale": 0.2,
+        "scale": 0.5,
         "z_order": 0,
         "apply_hue": true,
         "apply_saturation": true,
@@ -56,7 +60,7 @@
         "dna_gene": "color_hue",
         "offset_x": 0,
         "offset_y": 0,
-        "scale": 0.2,
+        "scale": 0.4,
         "z_order": 0,
         "apply_hue": true,
         "apply_saturation": true,
@@ -557,18 +561,11 @@
         "C:/Users/atomi/Downloads/Brain-V3/images/pond.png"
       ],
       "tile_mode": false,
-      "animation_speed": 0.01,
+      "animation_speed": 0.016666666666666666,
       "scale": 3.0
     },
     "hazard": {
       "object_type": "hazard",
-      "image_paths": [],
-      "tile_mode": true,
-      "animation_speed": 0.2,
-      "scale": 1.0
-    },
-    "food": {
-      "object_type": "food",
       "image_paths": [],
       "tile_mode": true,
       "animation_speed": 0.2,
@@ -586,6 +583,70 @@
       "image_paths": [],
       "tile_mode": true,
       "animation_speed": 0.2,
+      "scale": 1.0
+    },
+    "food": {
+      "object_type": "food",
+      "image_paths": [],
+      "tile_mode": false,
+      "animation_speed": 0.2,
+      "scale": 0.2
+    },
+    "food_plant": {
+      "object_type": "food_plant",
+      "image_paths": [],
+      "tile_mode": true,
+      "animation_speed": 0.2,
+      "scale": 1.0
+    },
+    "food_sweet_berry": {
+      "object_type": "food_sweet_berry",
+      "image_paths": [
+        "C:/Users/atomi/Downloads/Brain-V3/images/red berry bush.png"
+      ],
+      "tile_mode": false,
+      "animation_speed": 0.016666666666666666,
+      "scale": 5.0
+    },
+    "food_bitter_berry": {
+      "object_type": "food_bitter_berry",
+      "image_paths": [
+        "C:/Users/atomi/Downloads/Brain-V3/images/bitter blue berry bush.png"
+      ],
+      "tile_mode": false,
+      "animation_speed": 0.016666666666666666,
+      "scale": 2.0
+    },
+    "food_poison_berry": {
+      "object_type": "food_poison_berry",
+      "image_paths": [
+        "C:/Users/atomi/Downloads/Brain-V3/images/green yellow berry bush.png"
+      ],
+      "tile_mode": false,
+      "animation_speed": 0.016666666666666666,
+      "scale": 2.0
+    },
+    "food_meat": {
+      "object_type": "food_meat",
+      "image_paths": [],
+      "tile_mode": true,
+      "animation_speed": 0.2,
+      "scale": 1.0
+    },
+    "tool_stone": {
+      "object_type": "tool_stone",
+      "image_paths": [
+        "C:/Users/atomi/Downloads/Brain-V3/images/stone.png"
+      ],
+      "tile_mode": false,
+      "animation_speed": 0.016666666666666666,
+      "scale": 2.0
+    },
+    "tool_group": {
+      "object_type": "tool_group",
+      "image_paths": [],
+      "tile_mode": false,
+      "animation_speed": 0.016666666666666666,
       "scale": 1.0
     }
   }

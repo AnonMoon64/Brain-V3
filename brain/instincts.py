@@ -106,11 +106,12 @@ INHIBITION_RULES = [
     (InstinctType.SURFACE_BREATHE, InstinctType.SEEK_SLEEP, 1.0),
     
     # Fear/danger inhibits most things
-    (InstinctType.FLEE_THREAT, InstinctType.SEEK_FOOD, 0.7),
+    # TUNING: Reduced inhibition to allow "panic eating" and survival actions
+    (InstinctType.FLEE_THREAT, InstinctType.SEEK_FOOD, 0.2), # Was 0.7 - Startled eating
     (InstinctType.FLEE_THREAT, InstinctType.EXPLORE_NOVEL, 0.9),
-    (InstinctType.FLEE_THREAT, InstinctType.APPROACH_MATE, 0.8),
-    (InstinctType.FLEE_THREAT, InstinctType.SEEK_SLEEP, 1.0),
-    (InstinctType.AVOID_HAZARD, InstinctType.SEEK_FOOD, 0.6),
+    (InstinctType.FLEE_THREAT, InstinctType.APPROACH_MATE, 0.6), # Was 0.8
+    (InstinctType.FLEE_THREAT, InstinctType.SEEK_SLEEP, 0.5), # Was 1.0 - Pass out if exhausted
+    (InstinctType.AVOID_HAZARD, InstinctType.SEEK_FOOD, 0.3), # Was 0.6
     (InstinctType.AVOID_HAZARD, InstinctType.EXPLORE_NOVEL, 0.8),
     
     # Hunger inhibits exploration (focus on food)

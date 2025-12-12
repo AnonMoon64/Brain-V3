@@ -542,9 +542,15 @@ class TemporalCreditAssignment:
         self.activation_history.append(activations.copy())
         self.time_stamps.append(current_time)
 
-        # Initialize eligibility buffer if needed
-        if self.eligibility_buffer is None or len(self.eligibility_buffer) != len(activations):
+        # Initialize or resize eligibility buffer if needed
+        if self.eligibility_buffer is None:
             self.eligibility_buffer = np.zeros(len(activations))
+        elif len(self.eligibility_buffer) != len(activations):
+            # Resize to match new activation size (due to neurogenesis)
+            new_buffer = np.zeros(len(activations))
+            old_len = min(len(self.eligibility_buffer), len(activations))
+            new_buffer[:old_len] = self.eligibility_buffer[:old_len]
+            self.eligibility_buffer = new_buffer
 
     def assign_credit(
         self,
@@ -564,8 +570,22 @@ class TemporalCreditAssignment:
         if len(self.activation_history) == 0:
             return np.zeros(1)
 
-        # Stack history into array
-        history_array = np.array(list(self.activation_history))
+        # Handle inhomogeneous arrays (due to dynamic neurogenesis)
+        # Pad all arrays to the same size as the most recent
+        history_list = list(self.activation_history)
+        max_size = max(len(arr) for arr in history_list)
+        
+        # Pad arrays to same size
+        padded_history = []
+        for arr in history_list:
+            if len(arr) < max_size:
+                padded = np.zeros(max_size)
+                padded[:len(arr)] = arr
+                padded_history.append(padded)
+            else:
+                padded_history.append(arr)
+        
+        history_array = np.array(padded_history)
         n_steps, n_neurons = history_array.shape
 
         # Apply attribution kernel to history
@@ -577,7 +597,14 @@ class TemporalCreditAssignment:
         weighted_history = history_array * kernel_slice[:, np.newaxis]
         credit = outcome * np.sum(weighted_history, axis=0)
 
-        # Update eligibility buffer
+        # Update eligibility buffer (resize if needed due to neurogenesis)
+        if self.eligibility_buffer is None or len(self.eligibility_buffer) != n_neurons:
+            new_buffer = np.zeros(n_neurons)
+            if self.eligibility_buffer is not None:
+                old_len = min(len(self.eligibility_buffer), n_neurons)
+                new_buffer[:old_len] = self.eligibility_buffer[:old_len]
+            self.eligibility_buffer = new_buffer
+        
         self.eligibility_buffer = 0.9 * self.eligibility_buffer + 0.1 * credit
 
         return credit
@@ -1557,6 +1584,9 @@ class KineticNeuromodulationSystem:
         Returns:
             Dict of current levels, states, and learning modifiers
         """
+        # Decay chemicals back to baseline
+        self.decay_chemicals(dt)
+
         state = {}
 
         # Update each neuromodulator release system
@@ -1914,6 +1944,35 @@ class KineticNeuromodulationSystem:
 
         return self.error_bargaining.arbitrate(da, ne, ht, ach)
 
+    def decay_chemicals(self, dt: float):
+        """
+        Decay all chemical modulators towards their baseline.
+        This prevents infinite panic/reward loops.
+        """
+        # Baseline levels
+        baselines = {
+            ModulatorType.DOPAMINE: 0.1,
+            ModulatorType.SEROTONIN: 0.3,
+            ModulatorType.NOREPINEPHRINE: 0.1,
+            ModulatorType.ACETYLCHOLINE: 0.1,
+            ModulatorType.CORTISOL: 0.05, 
+            ModulatorType.OXYTOCIN: 0.1,
+            ModulatorType.GLUTAMATE: 0.5,
+            ModulatorType.GABA: 0.5,
+            ModulatorType.ENDORPHIN: 0.0,
+            ModulatorType.ADRENALINE: 0.0,
+        }
+        
+        decay_rate = 0.05 * dt # Slow decay
+        
+        for mod_type, level in self._current_levels.items():
+            target = baselines.get(mod_type, 0.1)
+            # Decay towards target
+            if level > target:
+                self._current_levels[mod_type] = max(target, level - decay_rate)
+            elif level < target:
+                self._current_levels[mod_type] = min(target, level + decay_rate)
+
     def get_learning_modulation(self) -> Dict[str, float]:
         """
         Get current learning modulation factors (Enhanced).
@@ -1932,17 +1991,25 @@ class KineticNeuromodulationSystem:
         ne = self._current_levels.get(ModulatorType.NOREPINEPHRINE, 0.5)
         ach = self._current_levels.get(ModulatorType.ACETYLCHOLINE, 0.5)
         ht = self._current_levels.get(ModulatorType.SEROTONIN, 0.5)
+        cortisol = self._current_levels.get(ModulatorType.CORTISOL, 0.0)
 
         camp = self.second_messengers['cAMP'].level
         pka = self.second_messengers['PKA'].level
 
         # Base modulation factors
+        # Cortisol dramatically increases LTD (weakening) and reduces LTP (strengthening)
+        ltd_base = (1.0 - da) * 0.5 + 0.5
+        ltd_boost = 1.0 + (cortisol * 3.0) # Up to 4x LTD with max stress
+        
+        ltp_base = da * 1.5 + camp * 0.5 + pka
+        ltp_dampen = max(0.1, 1.0 - cortisol) # Dampen LTP under stress
+
         result = {
-            'ltp_modulation': da * 1.5 + camp * 0.5 + pka,
-            'ltd_modulation': (1.0 - da) * 0.5 + 0.5,
-            'attention': ach * 1.5 + ne * 0.5,
+            'ltp_modulation': ltp_base * ltp_dampen,
+            'ltd_modulation': ltd_base * ltd_boost,
+            'attention': ach * 1.5 + ne * 0.5 + (cortisol * 0.5), # Stress increases attention
             'consolidation': ne * 0.8 + ht * 0.4,
-            'stability': ht * 0.6 + 0.4,
+            'stability': ht * 0.6 + 0.4 - (cortisol * 0.3), # Stress reduces stability
             'exploration': ne * 0.5 + (1.0 - ht) * 0.3,
             'plasticity_threshold': self.second_messengers['PKA'].metaplasticity_factor,
         }

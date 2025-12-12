@@ -1,5 +1,5 @@
 """
-Chemical Brain Dashboard - PyQt6 GUI with four tabs
+Anima Drain Dashboard - PyQt6 GUI with four tabs
 
 Tab 1: Chat - Interact with the brain
 Tab 2: Status - Real-time visualization of brain state
@@ -884,7 +884,7 @@ class ChemicalBrainDashboard(QMainWindow):
         event.accept()
 
     def setup_ui(self):
-        self.setWindowTitle("Chemical Brain Dashboard")
+        self.setWindowTitle("Anima Dashboard")
         self.setMinimumSize(900, 700)
 
         # Dark theme
@@ -955,7 +955,7 @@ class ChemicalBrainDashboard(QMainWindow):
         layout = QVBoxLayout(central)
 
         # Header
-        header = QLabel("Chemical Brain Dashboard")
+        header = QLabel("Anima Dashboard")
         header.setStyleSheet("font-size: 24px; font-weight: bold; color: #4CAF50; padding: 10px;")
         header.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(header)
@@ -974,7 +974,10 @@ class ChemicalBrainDashboard(QMainWindow):
         
         # Settings tab (if available)
         if _HAS_SETTINGS_TAB and SettingsTab is not None:
-            self.settings_tab = SettingsTab()
+            # Pass sound manager if available from game tab
+            sound_mgr = getattr(self.game_tab, 'sound_manager', None) if hasattr(self, 'game_tab') else None
+            
+            self.settings_tab = SettingsTab(sound_manager=sound_mgr)
             tabs.addTab(self.settings_tab, "⚙️ Settings")
             # Connect settings to game tab
             if hasattr(self, 'game_tab'):

@@ -30,3 +30,9 @@ Thumbs.db
 # Brain state saves (future)
 *.brain
 *.state
+/tests
+NSM.md
+IMPROVEMENTS.md
+ESSP.md
+IMPROVEMENTS.md
+IMPROVEMENTS.md

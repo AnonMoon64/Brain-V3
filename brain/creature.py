@@ -63,6 +63,16 @@ class Phenotype:
     # Metabolism
     metabolic_rate: float = 1.0     # Energy consumption multiplier
     max_energy: float = 100.0       # Maximum energy storage
+    digestive_efficiency: float = 1.0 # Nutrient extraction rate
+    heat_generation: float = 1.0    # Thermoregulation efficiency
+    
+    # Behavior (Genes)
+    bravery: float = 0.5            # 0.0 = Coward, 1.0 = Brave (affects flee duration)
+    
+    # Motor Signature (UPGRADE 8: Per-Creature Movement Personality)
+    stride_length: float = 1.0      # 0.5-1.5: Short steps vs long strides
+    movement_jitter: float = 0.1    # 0.0-0.5: Smooth vs twitchy movement
+    reaction_delay: float = 0.15    # 0.05-0.3s: Fast vs slow reactions
     
     def get_rgb(self) -> Tuple[int, int, int]:
         """Convert HSV to RGB for rendering."""
@@ -117,6 +127,8 @@ class Phenotype:
             smell_range=params.get('smell_range', 60),
             metabolic_rate=params.get('metabolic_rate', 1.0),
             max_energy=params.get('max_energy', 100),
+            digestive_efficiency=params.get('digestive_efficiency', 1.0),
+            heat_generation=params.get('heat_generation', 1.0),
         )
 
 
@@ -143,6 +155,7 @@ class Homeostasis:
     fatigue: float = 0.1            # 0=rested, 1=exhausted
     health: float = 1.0             # Overall health
     pain: float = 0.0               # Current pain level
+    cortisol: float = 0.1           # Stress hormone (0=calm, 1=max stress)
     
     # Sleep state
     sleepiness: float = 0.0         # 0=alert, 1=must sleep
@@ -157,7 +170,7 @@ class Homeostasis:
     
     # Immune/healing
     immune_strength: float = 1.0    # Resistance to disease
-    healing_rate: float = 0.01      # HP recovery per tick
+    healing_rate: float = 0.001     # HP recovery per tick (very slow natural healing)
     
     # Thresholds for drive activation
     HUNGER_THRESHOLD = 0.7   # Start seeking food when nutrition < 70%
@@ -171,7 +184,8 @@ class Homeostasis:
     FERTILITY_THRESHOLD = 0.6
     
     def update(self, dt: float, metabolic_rate: float = 1.0, 
-               ambient_temp: float = 20.0, activity_level: float = 0.5):
+               ambient_temp: float = 20.0, activity_level: float = 0.5,
+               digestive_efficiency: float = 1.0, heat_generation: float = 1.0):
         """
         Update homeostatic state over time.
         
@@ -180,36 +194,51 @@ class Homeostasis:
             metabolic_rate: Creature's metabolism
             ambient_temp: Environmental temperature
             activity_level: How active the creature is (0-1)
+            digestive_efficiency: Nutrient extraction rate
+            heat_generation: Thermoregulation efficiency
         """
         # Metabolism slows during sleep (body conserves resources)
         sleep_multiplier = 0.3 if self.is_sleeping else 1.0
         
         # Energy drain (higher with activity and metabolism)
-        # Base drain ~0.005/s at rest, ~0.0075/s when active
-        energy_drain = 0.005 * metabolic_rate * (0.5 + activity_level) * dt * sleep_multiplier
+        # Base drain ~0.01/s at rest, ~0.02/s when active - need to eat every ~50-100s
+        energy_drain = 0.01 * metabolic_rate * (0.5 + activity_level) * dt * sleep_multiplier
         self.energy = max(0, self.energy - energy_drain)
         
-        # Hydration drain (~0.003/s) - slower during sleep
-        hydration_drain = 0.003 * (1 + 0.5 * activity_level) * dt * sleep_multiplier
+        # Hydration drain (~0.008/s) - slower during sleep, need water every ~60-120s
+        hydration_drain = 0.008 * (1 + 0.5 * activity_level) * dt * sleep_multiplier
         self.hydration = max(0, self.hydration - hydration_drain)
         
         # Nutrition drains over time (stomach empties) - slower during sleep
-        nutrition_drain = 0.002 * dt * sleep_multiplier
+        # Higher digestive efficiency = slower drain (more thorough digestion)
+        nutrition_drain = 0.004 * dt * sleep_multiplier / max(0.1, digestive_efficiency)
         self.nutrition = max(0, self.nutrition - nutrition_drain)
         
-        # Nutrition converts to energy (slower than drain, so need to eat)
-        if self.nutrition > 0.1 and self.energy < 0.9:
-            conversion = min(0.003 * dt, self.nutrition - 0.1)
+        # Nutrition converts to energy (SLOWER than nutrition drain, so must keep eating)
+        # Only converts when nutrition > 0.2 (need substantial food to digest)
+        if self.nutrition > 0.2 and self.energy < 0.9:
+            base_conversion = 0.001 * dt * digestive_efficiency  # Slower conversion
+            conversion = min(base_conversion, self.nutrition - 0.2)
             self.nutrition -= conversion
-            self.energy = min(1, self.energy + conversion * 0.5)
+            # More efficient digestion = more energy per unit of food
+            energy_gain = conversion * 0.3 * digestive_efficiency
+            self.energy = min(1, self.energy + energy_gain)
         
         # Temperature regulation
         optimal_temp = 37.0  # Body temp in Celsius
-        temp_diff = ambient_temp - optimal_temp
+        
+        # Endothermy: Generate internal heat
+        internal_heat = 5.0 * heat_generation * metabolic_rate * (0.2 + 0.8 * activity_level)
+        
+        # Effective ambient temp (factoring in internal heat)
+        effective_ambient = ambient_temp + internal_heat
+        
+        temp_diff = effective_ambient - optimal_temp
         
         # Body tries to regulate but can't fully
+        # Larger bodies change temp slower? (ignoring size for now)
         temp_change = temp_diff * 0.001 * dt
-        self.temperature = np.clip(0.5 + temp_change, 0, 1)
+        self.temperature = np.clip(0.5 + temp_change * 0.1, 0, 1)
         
         # Extreme temps drain energy (thermoregulation cost)
         if abs(self.temperature - 0.5) > 0.2:
@@ -232,15 +261,11 @@ class Homeostasis:
             # Sleeping - recover and dream
             self._sleep_update(dt)
         
-        # Pain decays slowly
-        self.pain = max(0, self.pain - 0.005 * dt)
+        # Pain decays faster now - creatures recover from discomfort
+        self.pain = max(0, self.pain - 0.05 * dt)
         
-        # Healing (if energy available and not exhausted, better during sleep)
-        heal_mult = 2.0 if self.is_sleeping else 1.0
-        if self.energy > 0.3 and self.health < 1.0 and self.fatigue < 0.8:
-            heal_amount = self.healing_rate * self.immune_strength * dt * heal_mult
-            self.health = min(1.0, self.health + heal_amount)
-            self.energy -= heal_amount * 0.3  # Healing costs energy
+        # Cortisol decays slowly (stress hormone takes time to clear)
+        self.cortisol = max(0.1, self.cortisol - 0.02 * dt)  # Never goes below baseline 0.1
         
         # Age (very slow)
         self.age += 0.00001 * dt
@@ -254,19 +279,52 @@ class Homeostasis:
             self.fertility = 0
         
         # Starvation damage - die faster when starving
+        # Internal discomfort (not flee-worthy, just motivation to eat)
         if self.energy < 0.05:
-            self.health -= 0.05 * dt  # 5x faster death
+            self.health -= 0.15 * dt  # Critical starvation - die fast
+            self.pain = min(0.3, self.pain + 0.05 * dt)  # Capped mild pain
+            self.cortisol = min(1.0, self.cortisol + 0.2 * dt)  # Major stress
         elif self.energy < 0.15:
-            self.health -= 0.02 * dt  # Moderate damage when low energy
+            self.health -= 0.08 * dt  # Moderate starvation damage
+            self.pain = min(0.2, self.pain + 0.02 * dt)  # Very mild
+            self.cortisol = min(0.8, self.cortisol + 0.1 * dt)  # Stress buildup
+        elif self.energy < 0.3:
+            # Warning zone - stress but no damage yet
+            self.cortisol = min(0.5, self.cortisol + 0.03 * dt)
         
-        # Dehydration damage
-        if self.hydration < 0.1:
-            self.health -= 0.03 * dt
+        # Dehydration damage - more severe than starvation
+        if self.hydration < 0.05:
+            self.health -= 0.2 * dt  # Critical dehydration
+            self.pain = min(0.3, self.pain + 0.05 * dt)
+            self.cortisol = min(1.0, self.cortisol + 0.25 * dt)  # Severe stress
+        elif self.hydration < 0.15:
+            self.health -= 0.1 * dt
+            self.pain = min(0.2, self.pain + 0.02 * dt)
+            self.cortisol = min(0.8, self.cortisol + 0.12 * dt)
+        elif self.hydration < 0.3:
+            self.cortisol = min(0.5, self.cortisol + 0.04 * dt)
         
         # Suffocation damage (drowning)
         if self.oxygen < 0.1:
-            self.health -= 0.05 * dt
-            self.pain = min(1.0, self.pain + 0.1 * dt)
+            self.health -= 0.1 * dt
+            self.pain = min(1.0, self.pain + 0.15 * dt)
+        
+        # Additional nutrition-based starvation (when stomach is empty)
+        if self.nutrition < 0.05 and self.energy < 0.3:
+            # No food in stomach AND low energy = starving
+            self.health -= 0.1 * dt
+            self.cortisol = min(1.0, self.cortisol + 0.15 * dt)
+        
+        # Healing ONLY happens when well-fed and hydrated (after damage checks)
+        # Cannot heal while starving/dehydrated
+        heal_mult = 2.0 if self.is_sleeping else 1.0
+        can_heal = (self.energy > 0.4 and self.nutrition > 0.2 and 
+                    self.hydration > 0.3 and self.fatigue < 0.8 and
+                    self.health < 1.0)
+        if can_heal:
+            heal_amount = self.healing_rate * self.immune_strength * dt * heal_mult
+            self.health = min(1.0, self.health + heal_amount)
+            self.energy -= heal_amount * 0.5  # Healing costs energy
     
     def _sleep_update(self, dt: float):
         """Update sleep state."""
@@ -330,6 +388,20 @@ class Homeostasis:
         """Check if creature is still alive."""
         return self.health > 0
     
+    @property
+    def hunger(self) -> float:
+        """Hunger level (0 = not hungry, 1 = starving). Inverse of nutrition."""
+        if self.nutrition < self.HUNGER_THRESHOLD:
+            return 1 - (self.nutrition / self.HUNGER_THRESHOLD)
+        return 0
+    
+    @property
+    def thirst(self) -> float:
+        """Thirst level (0 = not thirsty, 1 = dehydrated). Inverse of hydration."""
+        if self.hydration < self.THIRST_THRESHOLD:
+            return 1 - (self.hydration / self.THIRST_THRESHOLD)
+        return 0
+    
     def get_drive_levels(self) -> Dict[str, float]:
         """
         Calculate drive intensities based on homeostatic state.
@@ -339,16 +411,10 @@ class Homeostasis:
         drives = {}
         
         # Hunger: increases as nutrition decreases
-        if self.nutrition < self.HUNGER_THRESHOLD:
-            drives['hunger'] = 1 - (self.nutrition / self.HUNGER_THRESHOLD)
-        else:
-            drives['hunger'] = 0
+        drives['hunger'] = self.hunger
         
         # Thirst
-        if self.hydration < self.THIRST_THRESHOLD:
-            drives['thirst'] = 1 - (self.hydration / self.THIRST_THRESHOLD)
-        else:
-            drives['thirst'] = 0
+        drives['thirst'] = self.thirst
         
         # Rest (fatigue drive)
         if self.fatigue > self.FATIGUE_THRESHOLD:
@@ -418,6 +484,7 @@ class Action(Enum):
     MATE = auto()
     CALL = auto()          # Vocalization
     INTERACT = auto()      # Generic interaction
+    SPEAK = auto()         # Language
 
 
 @dataclass
@@ -502,8 +569,11 @@ class CreatureBody:
         activity = abs(self.motor.vx) / self.phenotype.max_speed
         
         # Update homeostasis
+        # Update homeostasis
         self.homeostasis.update(dt, self.phenotype.metabolic_rate, 
-                               ambient_temp, activity)
+                               ambient_temp, activity,
+                               digestive_efficiency=self.phenotype.digestive_efficiency,
+                               heat_generation=self.phenotype.heat_generation)
         
         # Check hazards - check tile creature is standing on (y+5 to catch the ground tile)
         # Check hazards/anomalies
@@ -693,6 +763,7 @@ class CreatureBody:
             'hydration': self.homeostasis.hydration,
             'fatigue': self.homeostasis.fatigue,
             'pain': self.homeostasis.pain,
+            'cortisol': self.homeostasis.cortisol,
             'temperature': self.homeostasis.temperature,
             'health': self.homeostasis.health,
             'fertility': self.homeostasis.fertility,
@@ -708,6 +779,12 @@ class CreatureBody:
             'in_shelter': self.motor.in_shelter,
             'vx': self.motor.vx,
             'vy': self.motor.vy,
+        }
+        
+        # Add world bounds
+        data['world_bounds'] = {
+            'min_x': getattr(world, 'min_x', None),
+            'max_x': getattr(world, 'max_x', None)
         }
         
         # Add visible creatures
@@ -769,6 +846,13 @@ class CreatureBody:
         vec[21] = 1.0 if sensory_data.get('in_water', False) else 0.0
         vec[22] = 1.0 if sensory_data.get('in_shelter', False) else 0.0
         vec[23] = sensory_data.get('time_of_day', 0.5)
+        
+        # Wall Sensors (24-25)
+        # Proximity: 0=far (>=200px), 1=touching
+        wall_dist = sensory_data.get('nearest_wall_dist', 200)
+        proximity = max(0, 1.0 - (wall_dist / 200.0))
+        vec[24] = proximity
+        vec[25] = sensory_data.get('nearest_wall_dir', 0.0)
         
         # Motor state (26-29)
         motor = sensory_data.get('motor', {})

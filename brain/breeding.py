@@ -467,6 +467,74 @@ def _develop_body_from_genome(genome: Genome) -> Dict[str, float]:
     }
 
 
+
+# =============================================================================
+# NEURAL STRUCTURE BREEDING (SYSTEM 1)
+# =============================================================================
+
+def breed_neural_structure(parent1_brain: Any, parent2_brain: Optional[Any] = None) -> Dict[str, Any]:
+    """
+    Combine structural snapshots from parent brains (Instinct Inheritance).
+    
+    Extracts structural primitives (compression engine patterns) from parents
+    and combines them to form the innate structure of the offspring.
+    
+    Args:
+        parent1_brain: The first parent's brain (ThreeSystemBrain)
+        parent2_brain: The second parent's brain (optional)
+        
+    Returns:
+        Structural snapshot to load into offspring brain
+    """
+    snapshot = {
+        'version': '1.0',
+        'compression_engine': {},
+    }
+    
+    # helper to get primitives
+    def get_prims(brain):
+        if hasattr(brain, 'get_structural_snapshot'):
+            try:
+                s = brain.get_structural_snapshot()
+                return s.get('compression_engine', {}).get('cortical_primitives', [])
+            except Exception as e:
+                print(f"Error getting snapshot: {e}")
+                return []
+        return []
+
+    prims1 = get_prims(parent1_brain)
+    prims2 = get_prims(parent2_brain) if parent2_brain else []
+    
+    # Combine primitives
+    # Strategy: Take 50% from each parent + small mutation chance
+    combined_prims = []
+    
+    # If single parent (asexual/fallback), take mostly from valid parent
+    if not prims2:
+        combined_prims = [p.copy() for p in prims1]
+    else:
+        # Sexual reproduction - mix and match
+        # Limit total primitives to prevent bloating (e.g. max 100 inherited)
+        max_inherited = 100
+        
+        # Shuffle both lists (using numpy if available, else generic logic)
+        # Note: numpy is imported as np at top of file
+        p1_idxs = np.random.permutation(len(prims1))
+        p2_idxs = np.random.permutation(len(prims2))
+        
+        # Take from parent 1
+        for i in range(min(len(prims1), max_inherited // 2)):
+            combined_prims.append(prims1[p1_idxs[i]].copy())
+            
+        # Take from parent 2
+        for i in range(min(len(prims2), max_inherited // 2)):
+            combined_prims.append(prims2[p2_idxs[i]].copy())
+            
+    snapshot['compression_engine']['cortical_primitives'] = combined_prims
+    
+    return snapshot
+
+
 # =============================================================================
 # EXPORTS
 # =============================================================================
@@ -479,4 +547,5 @@ __all__ = [
     'calculate_mate_compatibility',
     'select_mate',
     'create_offspring',
+    'breed_neural_structure',
 ]

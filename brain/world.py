@@ -49,19 +49,109 @@ class Weather(Enum):
     HEAT_WAVE = 4
 
 
+class FoodType(Enum):
+    """Types of food with different effects."""
+    PLANT = "plant"
+    MEAT = "meat"
+    SWEET_BERRY = "sweet_berry"    # Reward (Dopamine)
+    BITTER_BERRY = "bitter_berry"  # Aversion (No nutritional value)
+    POISON_BERRY = "poison_berry"  # Punishment (Pain/Cortisol)
+
+
+class ToolType(Enum):
+    """Types of tools creatures can pick up and use."""
+    STICK = "stick"     # Long reach, poking, digging
+    STONE = "stone"     # Heavy, throwing, breaking
+    LEAF = "leaf"       # Carrying water, cover
+    SHELL = "shell"     # Scooping, protection
+    BONE = "bone"       # Digging, weapon
+
+
+@dataclass
+class ToolObject:
+    """A tool item in the world that creatures can pick up and use."""
+    x: float
+    y: float
+    tool_type: ToolType = ToolType.STICK
+    weight: float = 0.5         # Affects carry speed (0-1)
+    durability: float = 1.0     # How much use left (0-1)
+    held_by: Optional[str] = None  # Creature ID if held
+    
+    # Tool properties (what the tool is good at)
+    reach: float = 0.0          # Extra reach distance (sticks)
+    damage: float = 0.0         # Damage when thrown (stones)
+    carry_capacity: float = 0.0 # Can carry stuff (leaves, shells)
+    
+    # Throwing physics
+    throwing: bool = False      # Currently in flight
+    throw_vx: float = 0.0       # Velocity while thrown
+    throw_vy: float = 0.0
+    throw_power: float = 1.0    # Power of throw
+    thrower_id: Optional[str] = None  # Who threw it (avoid self-damage)
+    
+    # Throwing physics
+    throwing: bool = False      # Currently in flight
+    throw_vx: float = 0.0       # Velocity while thrown
+    throw_vy: float = 0.0
+    throw_power: float = 1.0    # Power of throw
+    
+    def __post_init__(self):
+        """Set tool properties based on type."""
+        if self.tool_type == ToolType.STICK:
+            self.reach = 50.0
+            self.weight = 0.3
+            self.damage = 5.0
+        elif self.tool_type == ToolType.STONE:
+            self.reach = 0.0
+            self.weight = 0.7
+            self.damage = 15.0
+        elif self.tool_type == ToolType.LEAF:
+            self.reach = 0.0
+            self.weight = 0.1
+            self.carry_capacity = 0.3
+        elif self.tool_type == ToolType.SHELL:
+            self.reach = 10.0
+            self.weight = 0.4
+            self.carry_capacity = 0.5
+            self.damage = 8.0
+        elif self.tool_type == ToolType.BONE:
+            self.reach = 30.0
+            self.weight = 0.5
+            self.damage = 12.0
+    
+    def use(self, dt: float = 0.1) -> bool:
+        """Use the tool, reducing durability. Returns True if still usable."""
+        self.durability -= 0.05 * dt
+        return self.durability > 0
+    
+    def is_available(self) -> bool:
+        """Check if tool is available to pick up."""
+        return self.held_by is None and self.durability > 0 and not getattr(self, 'throwing', False)
+    
+    def get_hold_position(self, creature_x: float, creature_y: float, 
+                         creature_width: float, facing_right: bool) -> tuple:
+        """Get position where tool should be displayed when held."""
+        # Attach to front of creature (ahead of center)
+        offset_x = creature_width * 0.6 if facing_right else -creature_width * 0.6
+        offset_y = -5  # Slightly above center
+        return (creature_x + offset_x, creature_y + offset_y)
+
+
 @dataclass
 class FoodSource:
     """A food item in the world."""
     x: float
     y: float
     nutrition: float = 0.5          # Energy provided (0-1 scale)
-    type: str = "plant"             # "plant" or "meat"
+    type: FoodType = FoodType.PLANT # "plant", "meat", etc.
     spoilage_rate: float = 0.001    # How fast it decays
     remaining: float = 1.0          # 0-1, how much left
     
     def decay(self, dt: float = 1.0):
         """Food decays over time."""
-        self.remaining -= self.spoilage_rate * dt
+        # Meat spoils faster
+        rate = self.spoilage_rate * 2.0 if self.type == FoodType.MEAT else self.spoilage_rate
+        self.remaining -= rate * dt
         return self.remaining > 0
 
 
@@ -85,6 +175,20 @@ class Shelter:
     height: float
     temperature_mod: float = 0.0    # Temperature modification
     safety: float = 0.8             # Predation reduction
+
+
+@dataclass
+class WaterSource:
+    """A water pool object at a specific world position (not tile-based)."""
+    x: float            # Center X in world coordinates
+    y: float            # Center Y in world coordinates
+    width: float = 150.0   # Width in pixels
+    height: float = 50.0   # Height in pixels (visual)
+    
+    def contains_point(self, px: float, py: float, radius: float = 0.0) -> bool:
+        """Check if a point (with optional radius) overlaps this water source."""
+        return (abs(px - self.x) < (self.width / 2 + radius) and
+                abs(py - self.y) < (self.height / 2 + radius))
 
 
 # =============================================================================
@@ -118,6 +222,12 @@ class World:
         """
         self.width = width
         self.height = height
+        
+        # Horizontal Boundaries (None = Infinite)
+        self.min_x = None
+        self.max_x = None
+        self.zone_width = None  # Width of each zone (set by GUI from background image width)
+        
         self.tile_size = tile_size
         self.gravity = gravity
         
@@ -147,12 +257,18 @@ class World:
         
         # Dynamic objects
         self.food_sources: List[FoodSource] = []
+        self.water_sources: List['WaterSource'] = []  # Water objects across zones
         self.hazards: List[Hazard] = []
         self.shelters: List[Shelter] = []
+        self.tools: List[ToolObject] = []  # TIER 4: Tool objects
         
         # Food spawning
-        self.food_spawn_rate = 0.04    # Probability per tick (Increased from 0.005)
-        self.max_food = 80             # Increased max food
+        self.food_spawn_rate = 0.01    # Probability per tick (reduced for less clutter)
+        self.max_food = 30             # Reduced max food
+        
+        # Tool spawning
+        self.tool_spawn_rate = 0.002   # Less common than food
+        self.max_tools = 15            # Max tools in world
         
         # Spatial Partitioning
         if _HAS_QUADTREE:
@@ -163,28 +279,67 @@ class World:
     
     def _generate_terrain(self):
         """Generate procedural terrain - FLAT ground only."""
-        # Ground at bottom third - FLAT, no platforms
-        ground_level = self.tiles_y * 2 // 3
+        # Ground at 20% from top
+        # tiles_y = 22, so 20% = row 4-5 = tiles_y - 18
+        ground_level = self.tiles_y - 18
         
         # Fill ground - simple flat terrain
         self.tiles[ground_level:, :] = TileType.GROUND.value
         
         # NO PLATFORMS - removed to prevent invisible platform issues
         
-        # Add water pool (only if world is large enough)
-        # Water is placed ABOVE ground level so creatures can walk to edge
-        if self.tiles_x > 15:
-            water_x = np.random.randint(5, max(6, self.tiles_x // 2))
-            water_w = np.random.randint(4, min(10, self.tiles_x - water_x))
-            # Water sits on TOP of ground (ground_level - 1), not inside it
-            self.tiles[ground_level - 1, water_x:water_x+water_w] = TileType.WATER.value
+        # Water and food are spawned later in respawn_across_zones() 
+        # after world bounds are set from indexed backgrounds
         
-        # Hazards disabled for now - can add back later
-        # (Removed radiation and healing zones)
+        # Spawn initial tools (sticks and stones) in the starting zone
+        # 1-2 sticks and 1-2 stones scattered around (reduced to half)
+        n_sticks = np.random.randint(1, 3)
+        n_stones = np.random.randint(1, 3)
+        min_spacing = 80  # Minimum distance between tools
         
-        # Add some initial food
-        for _ in range(5):  # More food
-            self._spawn_food()
+        for _ in range(n_sticks):
+            for attempt in range(50):  # Try up to 50 times to find non-overlapping spot
+                spawn_x = np.random.randint(50, self.width - 50)
+                spawn_y = (ground_level - 1) * self.tile_size
+                
+                # Check if this position overlaps with existing tools
+                overlap = False
+                for existing_tool in self.tools:
+                    dist = np.sqrt((existing_tool.x - spawn_x)**2 + (existing_tool.y - spawn_y)**2)
+                    if dist < min_spacing:
+                        overlap = True
+                        break
+                
+                if not overlap:
+                    self.tools.append(ToolObject(
+                        x=float(spawn_x),
+                        y=float(spawn_y),
+                        tool_type=ToolType.STICK
+                    ))
+                    break
+        
+        for _ in range(n_stones):
+            for attempt in range(50):
+                spawn_x = np.random.randint(50, self.width - 50)
+                spawn_y = (ground_level - 1) * self.tile_size
+                
+                # Check if this position overlaps with existing tools
+                overlap = False
+                for existing_tool in self.tools:
+                    dist = np.sqrt((existing_tool.x - spawn_x)**2 + (existing_tool.y - spawn_y)**2)
+                    if dist < min_spacing:
+                        overlap = True
+                        break
+                
+                if not overlap:
+                    self.tools.append(ToolObject(
+                        x=float(spawn_x),
+                        y=float(spawn_y),
+                        tool_type=ToolType.STONE
+                    ))
+                    break
+        
+        print(f"[World] Spawned {len([t for t in self.tools if t.tool_type == ToolType.STICK])} sticks and {len([t for t in self.tools if t.tool_type == ToolType.STONE])} stones at ground level {ground_level}")
         
         # Temperature zones
         # Left side cooler
@@ -193,31 +348,396 @@ class World:
         self.temperature[:, 2*self.tiles_x//3:] += 10
     
     def _spawn_food(self):
-        """Spawn a food item at a valid location."""
+        """Spawn a food item at a valid location across all world zones."""
         if len(self.food_sources) >= self.max_food:
             return
         
-        # Find ground tiles
+        # Determine spawn range based on world bounds (set by indexed backgrounds)
+        # No padding - spawn across full zone bounds
+        if self.min_x is not None and self.max_x is not None:
+            spawn_min_x = self.min_x
+            spawn_max_x = self.max_x
+            # DEBUG: Print bounds being used
+            if len(self.food_sources) == 0:
+                print(f"[Food Spawn] Using bounds: {spawn_min_x} to {spawn_max_x}")
+        else:
+            spawn_min_x = 0
+            spawn_max_x = self.width
+            print(f"[Food Spawn] WARNING: No bounds set, using width={self.width}")
+        
+        # Find a valid spawn location
         for _ in range(20):  # Max attempts
-            tx = np.random.randint(0, self.tiles_x)
-            ty = np.random.randint(0, self.tiles_y - 1)
+            # Random x across all zones
+            spawn_x = spawn_min_x + np.random.random() * (spawn_max_x - spawn_min_x)
             
-            # Check if above ground
-            if (self.tiles[ty, tx] == TileType.EMPTY.value and 
-                self.tiles[ty + 1, tx] == TileType.GROUND.value):
-                
-                food_type = "plant" if np.random.random() < 0.8 else "meat"
-                nutrition = 0.3 + np.random.random() * 0.5  # 0.3-0.8 scale
-                
-                self.food_sources.append(FoodSource(
-                    x=tx * self.tile_size + self.tile_size // 2,
-                    y=ty * self.tile_size + self.tile_size // 2,
-                    nutrition=nutrition,
-                    type=food_type,
-                    spoilage_rate=0.0005 if food_type == "plant" else 0.002
-                ))
-                return
+            # Convert to local tile coordinates for ground check
+            # We check tiles in the "home" zone (0 to width) - terrain is the same across zones
+            local_x = spawn_x % self.width
+            tx = int(local_x / self.tile_size)
+            tx = min(tx, self.tiles_x - 1)  # Clamp to valid range
+            
+            # Search from bottom up for a valid spawn position (just above ground)
+            for ty in range(self.tiles_y - 2, 0, -1):
+                # Check if this tile is empty with ground below
+                if (self.tiles[ty, tx] == TileType.EMPTY.value and 
+                    self.tiles[ty + 1, tx] == TileType.GROUND.value):
+                    
+                    # Determine type - only berry types (which have images)
+                    r = np.random.random()
+                    if r < 0.5:
+                        food_type = FoodType.SWEET_BERRY
+                        nutrition = 0.6 + np.random.random() * 0.3 # High value
+                    elif r < 0.8:
+                        food_type = FoodType.BITTER_BERRY
+                        nutrition = 0.1 # Low value
+                    else:
+                        food_type = FoodType.POISON_BERRY
+                        nutrition = 0.0 # No value
+                    
+                    # Spawn at the actual world x, with y based on tile
+                    self.food_sources.append(FoodSource(
+                        x=spawn_x,
+                        y=ty * self.tile_size + self.tile_size // 2,
+                        nutrition=nutrition,
+                        type=food_type,
+                        spoilage_rate=0.0005
+                    ))
+                    return  # Successfully spawned, exit function
+
+    def _spawn_tool(self):
+        """Spawn a tool item at a valid location. TIER 4: Tool Use."""
+        if len(self.tools) >= self.max_tools:
+            return
+        
+        # Spawn across full zone bounds - no padding
+        if self.min_x is not None and self.max_x is not None:
+            spawn_min_x = self.min_x
+            spawn_max_x = self.max_x
+        else:
+            spawn_min_x = 0
+            spawn_max_x = self.width
+        
+        # Find valid spawn location (same logic as food)
+        for _ in range(20):
+            spawn_x = spawn_min_x + np.random.random() * (spawn_max_x - spawn_min_x)
+            local_x = spawn_x % self.width
+            tx = int(local_x / self.tile_size)
+            
+            for ty in range(self.tiles_y - 1, 0, -1):
+                if (self.tiles[ty, tx] == TileType.GROUND.value and 
+                    self.tiles[ty-1, tx] == TileType.EMPTY.value):
+                    
+                    # Random tool type (sticks and stones most common)
+                    r = np.random.random()
+                    if r < 0.4:
+                        tool_type = ToolType.STICK
+                    elif r < 0.7:
+                        tool_type = ToolType.STONE
+                    elif r < 0.85:
+                        tool_type = ToolType.LEAF
+                    elif r < 0.95:
+                        tool_type = ToolType.SHELL
+                    else:
+                        tool_type = ToolType.BONE
+                    
+                    self.tools.append(ToolObject(
+                        x=spawn_x,
+                        y=ty * self.tile_size - self.tile_size // 2,
+                        tool_type=tool_type
+                    ))
+                    return
+
+    def get_nearby_tools(self, x: float, y: float, radius: float = 100.0) -> List[ToolObject]:
+        """Get tools within radius of position. TIER 4."""
+        nearby = []
+        for tool in self.tools:
+            if tool.is_available():
+                dist = np.sqrt((tool.x - x)**2 + (tool.y - y)**2)
+                if dist < radius:
+                    nearby.append(tool)
+        return nearby
     
+    def pickup_tool(self, tool: ToolObject, creature_id: str) -> bool:
+        """Creature picks up a tool. Returns True if successful."""
+        if tool in self.tools and tool.is_available():
+            tool.held_by = creature_id
+            return True
+        return False
+    
+    def drop_tool(self, tool: ToolObject, x: float, y: float):
+        """Creature drops a tool at position."""
+        if tool in self.tools:
+            tool.held_by = None
+            tool.x = x
+            tool.y = y
+    
+    def throw_tool(self, tool: ToolObject, start_x: float, start_y: float, 
+                   direction: float, power: float = 1.0, thrower_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Throw a tool in a direction with physics simulation.
+        
+        Args:
+            tool: Tool to throw
+            start_x, start_y: Starting position
+            direction: Angle in radians (0 = right, pi = left)
+            power: Throw strength (0-1)
+            thrower_id: ID of creature throwing (to avoid self-damage)
+        
+        Returns info about where it landed and what it hit.
+        """
+        if tool not in self.tools:
+            return {'success': False}
+        
+        # Release from creature
+        tool.held_by = None
+        tool.throwing = True
+        tool.throw_power = power
+        
+        # Calculate initial velocity based on weight and power
+        # Lighter objects travel farther, heavier do more damage
+        base_speed = 300 * power  # pixels per second
+        speed = base_speed * (1.5 - tool.weight)  # Lighter = faster
+        
+        tool.throw_vx = np.cos(direction) * speed
+        tool.throw_vy = np.sin(direction) * speed
+        tool.x = start_x
+        tool.y = start_y
+        
+        return {
+            'success': True,
+            'throwing': True,
+            'thrower_id': thrower_id
+        }
+    
+    def update_thrown_tools(self, dt: float, creatures: List = None) -> List[Dict[str, Any]]:
+        """
+        Update physics for thrown tools and check for hits.
+        
+        Args:
+            dt: Time delta
+            creatures: List of creatures to check for hits
+        
+        Returns list of hit events with damage info.
+        """
+        hit_events = []
+        
+        for tool in self.tools:
+            if not tool.throwing:
+                continue
+            
+            # Store previous position for collision check
+            prev_x, prev_y = tool.x, tool.y
+            
+            # Apply physics
+            tool.throw_vy += 400 * dt  # Gravity (pixels/s²)
+            tool.x += tool.throw_vx * dt
+            tool.y += tool.throw_vy * dt
+            
+            # Air resistance
+            tool.throw_vx *= (1.0 - 0.5 * dt)
+            tool.throw_vy *= (1.0 - 0.2 * dt)
+            
+            # Check ground collision
+            if tool.y >= self.height - 20:
+                tool.y = self.height - 20
+                tool.throwing = False
+                tool.throw_vx = 0
+                tool.throw_vy = 0
+                tool.durability -= 0.05  # Minor damage from landing
+                continue
+            
+            # Check creature hits
+            if creatures:
+                for creature in creatures:
+                    if not hasattr(creature, 'motor') or not hasattr(creature, 'homeostasis'):
+                        continue
+                    
+                    # Skip if this creature threw it (avoid self-damage)
+                    creature_id = str(getattr(creature, 'id', None))
+                    if creature_id == getattr(tool, 'thrower_id', None):
+                        continue
+                    
+                    # Get creature bounds
+                    cx, cy = creature.motor.x, creature.motor.y
+                    cw = getattr(creature.phenotype, 'width', 20)
+                    ch = getattr(creature.phenotype, 'height', 30)
+                    
+                    # Simple AABB collision
+                    if (tool.x > cx - cw/2 and tool.x < cx + cw/2 and
+                        tool.y > cy - ch/2 and tool.y < cy + ch/2):
+                        
+                        # Calculate damage based on velocity and weight
+                        velocity_mag = np.sqrt(tool.throw_vx**2 + tool.throw_vy**2)
+                        speed_factor = min(velocity_mag / 300, 1.0)  # Normalize to throw speed
+                        
+                        # Base damage from tool properties scaled by speed and weight
+                        base_damage = tool.damage * speed_factor * (0.5 + tool.weight)
+                        
+                        # Check for head hit (top 30% of creature)
+                        head_zone = cy - ch * 0.35
+                        is_head_hit = tool.y < head_zone
+                        
+                        if is_head_hit:
+                            # Head hits: 3x damage, heavy objects (stone/bone) can instant kill
+                            damage = base_damage * 3.0
+                            
+                            # Instant death if heavy object hits head hard
+                            if tool.weight > 0.6 and speed_factor > 0.7:
+                                damage = creature.homeostasis.health * 2  # Overkill
+                        else:
+                            # Body hit: normal damage
+                            damage = base_damage
+                        
+                        # Apply damage
+                        creature.homeostasis.apply_damage(damage)
+                        
+                        # Stop tool
+                        tool.throwing = False
+                        tool.throw_vx = 0
+                        tool.throw_vy = 0
+                        tool.durability -= 0.15  # Hitting creature damages tool
+                        
+                        # Record event
+                        hit_events.append({
+                            'creature_id': getattr(creature, 'id', None),
+                            'tool_type': tool.tool_type.value,
+                            'damage': damage,
+                            'is_head_hit': is_head_hit,
+                            'is_lethal': damage >= creature.homeostasis.health,
+                            'position': (tool.x, tool.y)
+                        })
+                        
+                        break  # Tool stops at first hit
+        
+        return hit_events
+
+    def respawn_across_zones(self):
+        """Clear and respawn food/water across all indexed background zones.
+        Call this after min_x/max_x bounds are set.
+        
+        Uses per-zone boundaries for spawning - no padding, zones connect seamlessly.
+        """
+        if self.min_x is None or self.max_x is None:
+            return  # Bounds not set yet
+        
+        # Get zone boundaries
+        zone_boundaries = getattr(self, 'zone_boundaries', None)
+        
+        if not zone_boundaries:
+            # Fallback - create single zone
+            zone_boundaries = {0: {'start': self.min_x, 'end': self.max_x, 'width': self.max_x - self.min_x}}
+        
+        num_zones = len(zone_boundaries)
+        print(f"[Respawn] {num_zones} zones, world: {self.min_x} to {self.max_x}")
+            
+        # Reinitialize Quadtree to cover all zones
+        if _HAS_QUADTREE:
+            total_width = self.max_x - self.min_x
+            self.food_quadtree = QuadTree(Rect(self.min_x, 0, total_width, self.height))
+            
+        # Clear existing food
+        self.food_sources.clear()
+        
+        # Spawn food across zones
+        food_per_zone = max(1, self.max_food // (num_zones * 3))
+        for _ in range(food_per_zone * num_zones):
+            self._spawn_food()
+        
+        # TIER 4: Spawn tools across zones
+        min_spacing = 80
+        
+        # Spawn 1-2 sticks and 1-2 stones per zone - NO PADDING
+        for zone_idx, zone_info in zone_boundaries.items():
+            zone_start = zone_info['start']
+            zone_end = zone_info['end']
+            spawn_width = zone_end - zone_start
+            
+            if spawn_width <= 0:
+                continue
+            
+            # 1-2 sticks per zone
+            for _ in range(np.random.randint(1, 3)):
+                if len(self.tools) >= self.max_tools:
+                    break
+                    
+                # Try to find non-overlapping position
+                for attempt in range(50):
+                    spawn_x = zone_start + np.random.random() * spawn_width
+                    spawn_y = (self.tiles_y - 19) * self.tile_size  # One row above ground
+                    
+                    # Check overlap with existing tools
+                    overlap = False
+                    for existing_tool in self.tools:
+                        dist = np.sqrt((existing_tool.x - spawn_x)**2 + (existing_tool.y - spawn_y)**2)
+                        if dist < min_spacing:
+                            overlap = True
+                            break
+                    
+                    if not overlap:
+                        self.tools.append(ToolObject(
+                            x=float(spawn_x),
+                            y=float(spawn_y),
+                            tool_type=ToolType.STICK
+                        ))
+                        break
+            
+            # 1-2 stones per zone
+            for _ in range(np.random.randint(1, 3)):
+                if len(self.tools) >= self.max_tools:
+                    break
+                    
+                # Try to find non-overlapping position
+                for attempt in range(50):
+                    spawn_x = zone_start + np.random.random() * spawn_width
+                    spawn_y = (self.tiles_y - 19) * self.tile_size  # One row above ground
+                    
+                    # Check overlap with existing tools
+                    overlap = False
+                    for existing_tool in self.tools:
+                        dist = np.sqrt((existing_tool.x - spawn_x)**2 + (existing_tool.y - spawn_y)**2)
+                        if dist < min_spacing:
+                            overlap = True
+                            break
+                    
+                    if not overlap:
+                        self.tools.append(ToolObject(
+                            x=float(spawn_x),
+                            y=float(spawn_y),
+                            tool_type=ToolType.STONE
+                        ))
+                        break
+        
+        # Clear any existing water tiles from tile array (we use water_sources objects now)
+        self.tiles[self.tiles == TileType.WATER.value] = TileType.EMPTY.value
+            
+        # Clear existing water sources
+        self.water_sources.clear()
+        
+        # Spawn exactly ONE water source in zone 0 - creatures must travel back to drink
+        ground_y = (self.tiles_y - 18) * self.tile_size + self.tile_size // 2  # At ground level
+        
+        # Get zone 0's width from zone_boundaries
+        zone_0_info = zone_boundaries.get(0, zone_boundaries.get(min(zone_boundaries.keys())))
+        zone_0_start = zone_0_info['start']
+        zone_0_width = zone_0_info['width']
+        
+        # Single water pool in zone 0 only (flattened appearance - 50% larger)
+        water_x = zone_0_start + np.random.randint(int(zone_0_width * 0.25), int(zone_0_width * 0.75))
+        water_width = 225.0  # 150 * 1.5 = 225
+        water_height = 45.0  # 30 * 1.5 = 45
+        
+        self.water_sources.append(WaterSource(
+            x=float(water_x),
+            y=float(ground_y),
+            width=float(water_width),
+            height=float(water_height)
+        ))
+        
+        print(f"[Respawn] Created {len(self.water_sources)} water source(s) at x={water_x}")
+        
+        # NOTE: We no longer add water tiles to the tile array - only water_sources are used
+        # This prevents water from appearing in every chunk when tiles are repeated
+
     def update(self, dt: float = 1.0):
         """
         Update world state.
@@ -241,8 +761,15 @@ class World:
         if np.random.random() < self.food_spawn_rate * dt:
             self._spawn_food()
         
+        # Tool spawning (TIER 4)
+        if np.random.random() < self.tool_spawn_rate * dt:
+            self._spawn_tool()
+        
         # Food decay
         self.food_sources = [f for f in self.food_sources if f.decay(dt)]
+        
+        # Tool durability decay for held tools
+        self.tools = [t for t in self.tools if t.durability > 0]
         
         # Update Quadtree
         if _HAS_QUADTREE:
@@ -282,33 +809,47 @@ class World:
         self.temperature[:, 2*self.tiles_x//3:] += 10
     
     def get_tile(self, x: float, y: float) -> TileType:
-        """Get tile type at world coordinates."""
-        tx = int(x // self.tile_size)
+        """Get tile type at world coordinates (wraps across zones)."""
         ty = int(y // self.tile_size)
-        if 0 <= tx < self.tiles_x and 0 <= ty < self.tiles_y:
-            return TileType(self.tiles[ty, tx])
-        return TileType.EMPTY
+        if ty < 0 or ty >= self.tiles_y:
+            return TileType.EMPTY
+        
+        # Wrap x coordinate to local tile space (tiles repeat across all zones)
+        local_x = x % self.width
+        tx = int(local_x // self.tile_size)
+        tx = max(0, min(tx, self.tiles_x - 1))  # Clamp to valid range
+        
+        return TileType(self.tiles[ty, tx])
     
     def get_temperature(self, x: float, y: float) -> float:
-        """Get temperature at world coordinates."""
-        tx = int(x // self.tile_size)
+        """Get temperature at world coordinates (wraps across zones)."""
         ty = int(y // self.tile_size)
-        if 0 <= tx < self.tiles_x and 0 <= ty < self.tiles_y:
-            return float(self.temperature[ty, tx])
-        return 20.0
+        if ty < 0 or ty >= self.tiles_y:
+            return 20.0
+            
+        # Wrap x coordinate to local tile space
+        local_x = x % self.width
+        tx = int(local_x // self.tile_size)
+        tx = max(0, min(tx, self.tiles_x - 1))
+        
+        return float(self.temperature[ty, tx])
     
     def is_solid(self, x: float, y: float) -> bool:
         """Check if position is solid (collision)."""
-        # Out of bounds at bottom or sides = solid (prevents falling through world)
-        tx = int(x // self.tile_size)
+        # Out of bounds at bottom = solid (prevents falling through world)
         ty = int(y // self.tile_size)
-        if ty >= self.tiles_y or tx < 0 or tx >= self.tiles_x:
-            return True  # Bottom of world or out of horizontal bounds = solid
+        if ty >= self.tiles_y:
+            return True  # Bottom of world is solid
         if ty < 0:
-            return False  # Above world = not solid (can jump up)
+            return False  # Above world = not solid
         
-        tile = self.get_tile(x, y)
-        return tile == TileType.GROUND
+        # Wrap x coordinate to local tile space (tiles repeat across all zones)
+        local_x = x % self.width
+        tx = int(local_x // self.tile_size)
+        tx = max(0, min(tx, self.tiles_x - 1))  # Clamp to valid range
+        
+        tile = self.tiles[ty, tx]
+        return tile == TileType.GROUND.value
     
     def is_hazard(self, x: float, y: float) -> Tuple[bool, float, str]:
         """Check if position is hazardous, return (is_hazard, damage, type)."""
@@ -322,8 +863,28 @@ class World:
         return False, 0.0, "none"
     
     def is_water(self, x: float, y: float) -> bool:
-        """Check if position is water."""
-        return self.get_tile(x, y) == TileType.WATER
+        """Check if position is water (checks water_sources first, then tiles)."""
+        # Check water_sources objects first (zone-specific water)
+        if hasattr(self, 'water_sources'):
+            for water in self.water_sources:
+                if water.contains_point(x, y):
+                    return True
+        
+        # Fallback: check tile array (zone 0 only for backward compatibility)
+        if x < 0 or x >= self.width:
+            return False
+        return self.get_tile_nowrap(x, y) == TileType.WATER
+    
+    def get_tile_nowrap(self, x: float, y: float) -> TileType:
+        """Get tile type at world coordinates (NO wrapping - returns EMPTY outside bounds)."""
+        if x < 0 or x >= self.width:
+            return TileType.EMPTY
+        ty = int(y // self.tile_size)
+        if ty < 0 or ty >= self.tiles_y:
+            return TileType.EMPTY
+        tx = int(x // self.tile_size)
+        tx = max(0, min(tx, self.tiles_x - 1))
+        return TileType(self.tiles[ty, tx])
     
     def find_food_nearby(self, x: float, y: float, radius: float) -> List[FoodSource]:
         """Find food sources within radius."""
@@ -413,6 +974,15 @@ class World:
         data['wall_right'] = self.is_solid(x + 5, y)  # Wall directly right
         data['gap_ahead_left'] = data['edge_left'] and not self.is_solid(x - 40, y)  # Jumpable gap
         data['gap_ahead_right'] = data['edge_right'] and not self.is_solid(x + 40, y)
+        
+        # Wall proximity (normalized 0-1, where 1 is touching, 0 is far)
+        dist_left = x
+        dist_right = self.width - x
+        data['wall_dist_left'] = dist_left
+        data['wall_dist_right'] = dist_right
+        data['nearest_wall_dist'] = min(dist_left, dist_right)
+        # Direction to nearest wall (-1 left, 1 right)
+        data['nearest_wall_dir'] = -1.0 if dist_left < dist_right else 1.0
         
         # Distance to ground below (for fall detection)
         fall_distance = 0
@@ -538,9 +1108,20 @@ class World:
             new_x = x
             vx = 0
         
-        # World bounds
-        new_x = max(0, min(self.width - 1, new_x))
-        new_y = max(0, min(self.height - 1, new_y))
+        # World bounds - Horizontal Clamping (if limits set)
+        if self.min_x is not None and new_x < self.min_x:
+            new_x = self.min_x
+            vx = 0
+        if self.max_x is not None and new_x >= self.max_x:
+            new_x = self.max_x - 1  # Keep inside the boundary
+            vx = 0
+            
+        if new_y <= 0:
+            new_y = 0
+            vy = max(0, vy)
+        elif new_y >= self.height - 1:
+            new_y = self.height - 1
+            vy = min(0, vy)
         
         # Final ground check (safety net)
         if not on_ground and self.is_solid(new_x, new_y + 1):
@@ -550,7 +1131,7 @@ class World:
     
     def to_dict(self) -> Dict:
         """Serialize world state."""
-        return {
+        data = {
             'width': self.width,
             'height': self.height,
             'tile_size': self.tile_size,
@@ -559,10 +1140,20 @@ class World:
             'weather': self.weather.name,
             'food_sources': [
                 {'x': f.x, 'y': f.y, 'nutrition': f.nutrition, 
-                 'type': f.type, 'remaining': f.remaining}
+                 'type': f.type.value if hasattr(f.type, 'value') else str(f.type), 
+                 'remaining': f.remaining}
                 for f in self.food_sources
             ]
         }
+        
+        # Add water_sources if they exist
+        if hasattr(self, 'water_sources') and self.water_sources:
+            data['water_sources'] = [
+                {'x': w.x, 'y': w.y, 'width': w.width, 'height': w.height}
+                for w in self.water_sources
+            ]
+        
+        return data
     
     @classmethod
     def from_dict(cls, data: Dict) -> 'World':
@@ -581,6 +1172,17 @@ class World:
             )
             for f in data.get('food_sources', [])
         ]
+        
+        # Load water_sources if they exist in save data
+        world.water_sources = []
+        if 'water_sources' in data:
+            world.water_sources = [
+                WaterSource(
+                    x=w['x'], y=w['y'],
+                    width=w['width'], height=w['height']
+                )
+                for w in data['water_sources']
+            ]
         
         return world
     

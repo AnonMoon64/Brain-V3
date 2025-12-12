@@ -76,6 +76,29 @@ from .persistence import (
     load_brain,
 )
 
+# NSM: Neural Sleep & Memory Consolidation
+from .consolidation import (
+    ChemicalTaggingSystem,
+    ConsolidationEngine,
+    InheritedMemoryInstaller,
+    SleepManager,
+    MarkerType,
+    create_consolidation_system,
+)
+
+# TIER 3: Social Learning / Cultural Evolution
+from .social_learning import (
+    SocialLearningSystem,
+    CulturalKnowledge,
+    ObservedBehavior,
+)
+
+# TIER 3: Environmental Intelligence / Mental Maps
+from .mental_map import (
+    MentalMap,
+    MemoryLocation,
+)
+
 # Visualization: Matplotlib plotting (optional dependency)
 try:
     from .visualization import (

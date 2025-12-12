@@ -338,21 +338,34 @@ class DriveNeuromodulatorBridge:
         
         # Specific drive mappings
         
-        # High hunger/thirst → Cortisol
-        if current_drives.get('hunger', 0) > 0.6:
-            changes['cortisol'] += 0.02
-            changes['norepinephrine'] += 0.01
+        # High hunger/thirst → Cortisol (STARVATION STRESS)
+        hunger = current_drives.get('hunger', 0)
+        if hunger > 0.8:
+            # Critical hunger - major stress
+            changes['cortisol'] += 0.15
+            changes['norepinephrine'] += 0.1
+            changes['adrenaline'] += 0.05
+        elif hunger > 0.6:
+            changes['cortisol'] += 0.05
+            changes['norepinephrine'] += 0.02
         
-        if current_drives.get('thirst', 0) > 0.6:
-            changes['cortisol'] += 0.03
-            changes['adrenaline'] += 0.01
+        thirst = current_drives.get('thirst', 0)
+        if thirst > 0.8:
+            # Critical thirst - major stress
+            changes['cortisol'] += 0.2
+            changes['norepinephrine'] += 0.1
+            changes['adrenaline'] += 0.08
+        elif thirst > 0.6:
+            changes['cortisol'] += 0.06
+            changes['adrenaline'] += 0.02
         
         # Safety drive (pain/fear) → Norepinephrine + Adrenaline
         safety = current_drives.get('safety', 0)
         if safety > 0.3:
             changes['norepinephrine'] += safety * 0.1
             changes['adrenaline'] += safety * 0.15
-            changes['cortisol'] += safety * 0.05
+            # Stronger stress response to danger
+            changes['cortisol'] += safety * 0.2
         
         # Reproduction drive → Oxytocin + Dopamine
         repro = current_drives.get('reproduction', 0)
@@ -385,6 +398,10 @@ class DriveNeuromodulatorBridge:
         if pain > 0.2:
             changes['endorphin'] += pain * 0.1
             changes['adrenaline'] += pain * 0.05
+            
+            # TRAUMA: Severe pain causes massive stress spike
+            if pain > 0.5:
+                changes['cortisol'] += (pain - 0.5) * 0.5
         
         # Temperature discomfort → Cortisol
         temp = current_internal.get('temperature', 0.5)

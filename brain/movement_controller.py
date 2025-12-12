@@ -60,6 +60,7 @@ class MovementController:
     walk_speed: float = 120.0      # Pixels per second
     run_speed: float = 200.0       # When fleeing
     jump_power: float = 250.0      # Jump velocity
+    speed_multiplier: float = 1.0  # Multiplier for desperation/urgency
     
     # State
     facing_right: bool = True
@@ -73,8 +74,18 @@ class MovementController:
     detour_direction: float = 0.0  # When detouring around obstacle
     in_detour: bool = False
     
+    # State for smoothing
+    last_vx: float = 0.0
+    last_vy: float = 0.0
+    
     # Reach threshold
     reach_distance: float = 30.0   # How close = "arrived"
+    
+    def __post_init__(self):
+        """Randomize initial state so creatures aren't synchronized."""
+        self.wander_direction = 1.0 if np.random.random() < 0.5 else -1.0
+        self.wander_timer = np.random.random() * 3.0  # Start at random point in cycle
+        self.facing_right = np.random.random() < 0.5
     
     def set_hazards(self, hazards: list):
         """Update known hazard positions. Each is (x, y, radius)."""
@@ -84,11 +95,15 @@ class MovementController:
         """Stop moving."""
         self.goal = MovementGoal.STAY
         self.in_detour = False
+        self.stuck_timer = 0.0
+        self.blocked_timer = 0.0
         
     def set_goal_wander(self):
         """Wander randomly."""
         self.goal = MovementGoal.WANDER
         self.in_detour = False
+        self.stuck_timer = 0.0
+        self.blocked_timer = 0.0
         
     def set_goal_go_to(self, x: float, y: float):
         """Move toward a specific position."""
@@ -96,6 +111,7 @@ class MovementController:
         if abs(x - self.target_x) > 50 or abs(y - self.target_y) > 50:
             self.in_detour = False
             self.blocked_timer = 0.0
+            self.stuck_timer = 0.0
         self.goal = MovementGoal.GO_TO_TARGET
         self.target_x = x
         self.target_y = y
@@ -106,6 +122,8 @@ class MovementController:
         self.threat_x = x
         self.threat_y = y
         self.in_detour = False
+        self.stuck_timer = 0.0
+        self.blocked_timer = 0.0
         
     def set_goal_exit_water(self):
         """Get out of water."""
@@ -183,7 +201,21 @@ class MovementController:
             self.facing_right = True
         elif result['vx'] < -5:
             self.facing_right = False
-            
+        
+        # === SMOOTHING & CLAMPING ===
+        # Apply low-pass filter to remove jitter
+        # 0.8 * old + 0.2 * new
+        smooth_factor = 0.2
+        self.last_vx = self.last_vx * (1.0 - smooth_factor) + result['vx'] * smooth_factor
+        
+        # Use smoothed value
+        result['vx'] = self.last_vx
+        
+        # Clamp micro-movements to stop vibration
+        if abs(result['vx']) < 5.0:
+            result['vx'] = 0.0
+            self.last_vx = 0.0
+        
         return result
     
     def _do_wander(self, dt: float, x: float, y: float, 
@@ -191,11 +223,14 @@ class MovementController:
         """Wander randomly, changing direction occasionally."""
         result = {'vx': 0.0, 'vy': None, 'jump': False}
         
-        # Change direction occasionally
+        # Change direction occasionally with randomized timing
         self.wander_timer += dt
-        if self.wander_timer > 3.0 or self.stuck_timer > 0.5:
+        wander_interval = 2.0 + np.random.random() * 3.0  # 2-5 seconds, varies per check
+        if self.wander_timer > wander_interval or self.stuck_timer > 0.5:
             self.wander_timer = 0.0
-            self.wander_direction *= -1
+            # Random chance to flip or continue
+            if np.random.random() < 0.6:
+                self.wander_direction *= -1
             self.stuck_timer = 0.0
         
         # Check for edges/walls
@@ -224,7 +259,7 @@ class MovementController:
                 else:
                     self.wander_direction = 1.0
         
-        result['vx'] = self.wander_direction * self.walk_speed
+        result['vx'] = self.wander_direction * self.walk_speed * self.speed_multiplier
         
         # Water is passable - no special handling needed
             
@@ -295,12 +330,16 @@ class MovementController:
                 else:
                     avoidance_vx += push_strength * self.walk_speed
         
-        # Combine goal direction with avoidance
-        goal_vx = direction * self.walk_speed
-        result['vx'] = goal_vx + avoidance_vx
+        # Combine goal direction with avoidance, apply speed multiplier
+        goal_vx = direction * self.walk_speed * self.speed_multiplier
+        target_vx = goal_vx + avoidance_vx
         
-        # Clamp speed
-        result['vx'] = np.clip(result['vx'], -self.walk_speed, self.walk_speed)
+        # Clamp speed (with multiplier applied)
+        max_speed = self.walk_speed * self.speed_multiplier
+        target_vx = np.clip(target_vx, -max_speed, max_speed)
+        
+        # SMOOTHING (Low pass filter) reduces jitter
+        result['vx'] = target_vx # Will be smoothed in update()
         
         # Check for obstacles
         check_x = x + np.sign(result['vx']) * 20
@@ -335,9 +374,17 @@ class MovementController:
         # Full speed fleeing
         result['vx'] = direction * self.run_speed
         
+        # Check for walls ahead (Panic Jump!)
+        check_head = x + direction * 40
+        if world.is_solid(check_head, y) or world.is_solid(check_head, y + 20):
+            if on_ground:
+                result['jump'] = True
+            elif in_water:
+                 result['vy'] = -self.jump_power
+        
         # Always try to jump out of danger
         if on_ground:
-            result['jump'] = True
+            pass # result['jump'] = True # Reduced auto-jump, rely on wall jump or obstacles
             
         # Swim frantically in water
         if in_water:

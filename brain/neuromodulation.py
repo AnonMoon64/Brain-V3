@@ -544,10 +544,10 @@ class TemporalCreditAssignment:
 
         # Initialize or resize eligibility buffer if needed
         if self.eligibility_buffer is None:
-            self.eligibility_buffer = np.zeros(len(activations))
+            self.eligibility_buffer = np.zeros(len(activations), dtype=np.float32)
         elif len(self.eligibility_buffer) != len(activations):
             # Resize to match new activation size (due to neurogenesis)
-            new_buffer = np.zeros(len(activations))
+            new_buffer = np.zeros(len(activations), dtype=np.float32)
             old_len = min(len(self.eligibility_buffer), len(activations))
             new_buffer[:old_len] = self.eligibility_buffer[:old_len]
             self.eligibility_buffer = new_buffer
@@ -579,7 +579,7 @@ class TemporalCreditAssignment:
         padded_history = []
         for arr in history_list:
             if len(arr) < max_size:
-                padded = np.zeros(max_size)
+                padded = np.zeros(max_size, dtype=np.float32)
                 padded[:len(arr)] = arr
                 padded_history.append(padded)
             else:
@@ -599,7 +599,7 @@ class TemporalCreditAssignment:
 
         # Update eligibility buffer (resize if needed due to neurogenesis)
         if self.eligibility_buffer is None or len(self.eligibility_buffer) != n_neurons:
-            new_buffer = np.zeros(n_neurons)
+            new_buffer = np.zeros(n_neurons, dtype=np.float32)
             if self.eligibility_buffer is not None:
                 old_len = min(len(self.eligibility_buffer), n_neurons)
                 new_buffer[:old_len] = self.eligibility_buffer[:old_len]
@@ -612,7 +612,7 @@ class TemporalCreditAssignment:
     def get_eligibility(self) -> np.ndarray:
         """Get current eligibility traces."""
         if self.eligibility_buffer is None:
-            return np.zeros(1)
+            return np.zeros(1, dtype=np.float32)
         return self.eligibility_buffer
 
     def clear_history(self):
@@ -1565,11 +1565,13 @@ class KineticNeuromodulationSystem:
             self.simple_chemicals[ModulatorType.OXYTOCIN] *= 0.95
         
         # === Homeostatic drift for simple chemicals ===
+        # Chemicals drift back toward their baseline over time
+        # Rate of 0.1 means ~10% of the way back per second (with dt=1)
         for chem_type in self.simple_chemicals:
             current = self.simple_chemicals[chem_type]
             baseline = self.simple_baselines[chem_type]
             diff = baseline - current
-            self.simple_chemicals[chem_type] += diff * 0.02 * dt
+            self.simple_chemicals[chem_type] += diff * 0.1 * dt  # Increased from 0.02
             # Clamp to valid range
             self.simple_chemicals[chem_type] = max(0.0, min(1.0, self.simple_chemicals[chem_type]))
     
@@ -1949,29 +1951,34 @@ class KineticNeuromodulationSystem:
         Decay all chemical modulators towards their baseline.
         This prevents infinite panic/reward loops.
         """
-        # Baseline levels
+        # Baseline levels for kinetic systems
         baselines = {
-            ModulatorType.DOPAMINE: 0.1,
-            ModulatorType.SEROTONIN: 0.3,
-            ModulatorType.NOREPINEPHRINE: 0.1,
-            ModulatorType.ACETYLCHOLINE: 0.1,
-            ModulatorType.CORTISOL: 0.05, 
-            ModulatorType.OXYTOCIN: 0.1,
-            ModulatorType.GLUTAMATE: 0.5,
-            ModulatorType.GABA: 0.5,
-            ModulatorType.ENDORPHIN: 0.0,
-            ModulatorType.ADRENALINE: 0.0,
+            ModulatorType.DOPAMINE: 0.3,
+            ModulatorType.SEROTONIN: 0.5,
+            ModulatorType.NOREPINEPHRINE: 0.4,
+            ModulatorType.ACETYLCHOLINE: 0.5,
         }
         
-        decay_rate = 0.05 * dt # Slow decay
+        decay_rate = 0.1 * dt  # Increased from 0.05 for faster decay
         
-        for mod_type, level in self._current_levels.items():
-            target = baselines.get(mod_type, 0.1)
+        # Decay kinetic release systems
+        for mod_type, release_sys in self.release_systems.items():
+            target = baselines.get(mod_type, 0.3)
+            level = release_sys.tonic_level
             # Decay towards target
             if level > target:
-                self._current_levels[mod_type] = max(target, level - decay_rate)
+                release_sys.tonic_level = max(target, level - decay_rate)
             elif level < target:
-                self._current_levels[mod_type] = min(target, level + decay_rate)
+                release_sys.tonic_level = min(target, level + decay_rate)
+        
+        # Also decay simple_chemicals towards their baselines
+        for mod_type in self.simple_chemicals:
+            target = self.simple_baselines.get(mod_type, 0.3)
+            level = self.simple_chemicals[mod_type]
+            if level > target:
+                self.simple_chemicals[mod_type] = max(target, level - decay_rate)
+            elif level < target:
+                self.simple_chemicals[mod_type] = min(target, level + decay_rate)
 
     def get_learning_modulation(self) -> Dict[str, float]:
         """
@@ -2071,8 +2078,9 @@ class KineticNeuromodulationSystem:
             self._failure_count += 1
             # Trigger cortisol for failure (stress)
             if ModulatorType.CORTISOL in self.simple_chemicals:
+                # Very small addition - failures happen frequently for untrained brains
                 self.simple_chemicals[ModulatorType.CORTISOL] = min(
-                    1.0, self.simple_chemicals[ModulatorType.CORTISOL] + magnitude * 0.1
+                    1.0, self.simple_chemicals[ModulatorType.CORTISOL] + magnitude * 0.001  # Reduced from 0.1
                 )
 
     def clear_episode(self):

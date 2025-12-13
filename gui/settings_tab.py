@@ -206,9 +206,22 @@ class WorldObjectType:
     FOOD_POISON_BERRY = "food_poison_berry"
     FOOD_MEAT = "food_meat"
     
+    # Tool Types (System 6)
+    TOOL_STICK = "tool_stick"
+    TOOL_STONE = "tool_stone"
+    TOOL_LEAF = "tool_leaf"
+    TOOL_SHELL = "tool_shell"
+    TOOL_BONE = "tool_bone"
+    TOOL_NEST = "tool_nest"
+    TOOL_HAMMER = "tool_hammer"
+    TOOL_SHARP_ROCK = "tool_sharp_rock"
+    TOOL_SPEAR = "tool_spear"
+    
     ALL_TYPES = [WATER, HAZARD, GROUND, SHELTER, FOOD, 
                  FOOD_PLANT, FOOD_SWEET_BERRY, FOOD_BITTER_BERRY, 
-                 FOOD_POISON_BERRY, FOOD_MEAT]
+                 FOOD_POISON_BERRY, FOOD_MEAT,
+                 TOOL_STICK, TOOL_STONE, TOOL_LEAF, TOOL_SHELL, TOOL_BONE,
+                 TOOL_NEST, TOOL_HAMMER, TOOL_SHARP_ROCK, TOOL_SPEAR]
 
 
 @dataclass
@@ -225,6 +238,9 @@ class CreatureVisualConfig:
     # structure: body_parts[part_name][age_stage] = BodyPartSprite
     world_objects: Dict[str, WorldObjectConfig] = field(default_factory=dict)
     # structure: world_objects[object_type] = WorldObjectConfig
+    
+    # Game Options
+    aging_speed: float = 1.0  # 1.0 = 1 hour per creature year
     
     def __post_init__(self):
         # Initialize default empty structure for body parts
@@ -292,7 +308,8 @@ class CreatureVisualConfig:
             },
             "world_objects": {
                 obj: config.to_dict() for obj, config in self.world_objects.items()
-            }
+            },
+            "aging_speed": self.aging_speed
         }
     
     @classmethod
@@ -324,6 +341,10 @@ class CreatureVisualConfig:
         if 'world_objects' in data:
             for obj_type, obj_data in data['world_objects'].items():
                 config.world_objects[obj_type] = WorldObjectConfig.from_dict(obj_data)
+                
+        if 'aging_speed' in data:
+            config.aging_speed = float(data['aging_speed'])
+            
         return config
     
     def save(self, path: str):
@@ -467,6 +488,10 @@ class SettingsTab(QWidget):
         # Save/Load settings
         io_tab = self._create_io_tab()
         tabs.addTab(io_tab, "💾 Save/Load")
+        
+        # Game Options
+        game_tab = self._create_game_options_tab()
+        tabs.addTab(game_tab, "⚙️ Game Options")
         
         layout.addWidget(tabs)
     
@@ -931,7 +956,11 @@ class SettingsTab(QWidget):
                 "tool_stone",
                 "tool_leaf",
                 "tool_shell",
-                "tool_bone"
+                "tool_bone",
+                "tool_nest",
+                "tool_hammer",
+                "tool_sharp_rock",
+                "tool_spear"
             ]
             
             for t_type in tool_types:
@@ -1040,7 +1069,11 @@ class SettingsTab(QWidget):
                 "Stone": "tool_stone",
                 "Leaf": "tool_leaf",
                 "Shell": "tool_shell",
-                "Bone": "tool_bone"
+                "Bone": "tool_bone",
+                "Nest": "tool_nest",
+                "Hammer": "tool_hammer",
+                "Sharp Rock": "tool_sharp_rock",
+                "Spear": "tool_spear"
             }
             
             sub_type, ok = QInputDialog.getItem(
@@ -1589,3 +1622,39 @@ class SettingsTab(QWidget):
         if self.config.background_path and Path(self.config.background_path).exists():
             return QPixmap(self.config.background_path)
         return None
+
+    def _create_game_options_tab(self) -> QWidget:
+        """Create game options tab."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        
+        group = QGroupBox("Time & Aging")
+        g_layout = QGridLayout(group)
+        
+        g_layout.addWidget(QLabel("Aging Rate (Hours per Year):"), 0, 0)
+        
+        # Slider
+        # Range: 0.1 to 10.0. Slider int 1-100 -> /10.
+        self.age_slider = QSlider(Qt.Orientation.Horizontal)
+        self.age_slider.setRange(1, 100) # 0.1 to 10.0
+        self.age_slider.setValue(int(self.config.aging_speed * 10))
+        self.age_slider.valueChanged.connect(self._on_age_slider_changed)
+        g_layout.addWidget(self.age_slider, 0, 1)
+        
+        # Label
+        self.age_label = QLabel(f"{self.config.aging_speed:.1f} Hours")
+        g_layout.addWidget(self.age_label, 0, 2)
+        
+        g_layout.addWidget(QLabel("1.0 = Default (1 Hour per Year)\nHigher = Slower Aging (Longer Years)\nLower = Faster Aging"), 1, 0, 1, 3)
+        
+        layout.addWidget(group)
+        layout.addStretch()
+        
+        return widget
+
+    def _on_age_slider_changed(self, value):
+        """Handle age slider change."""
+        rate = value / 10.0
+        self.config.aging_speed = rate
+        self.age_label.setText(f"{rate:.1f} Hours")
+        self.settings_changed.emit()

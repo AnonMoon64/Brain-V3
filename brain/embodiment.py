@@ -25,6 +25,7 @@ from .three_system_brain import ThreeSystemBrain, BrainConfig
 from .creature import CreatureBody, Action, Homeostasis
 from .neuromodulation import ModulatorType
 from .signal_processing import RobustInputPipeline, NormalizationType
+from .spatial_memory import SpatialMemorySystem
 
 
 # =============================================================================
@@ -44,7 +45,8 @@ class SensoryEncoder:
     """
     
     def __init__(self, input_dim: int = 128, use_signal_processing: bool = True):
-        self.input_dim = input_dim
+        # Ensure minimum dimension to hold all hardcoded sensory channels (up to index 128)
+        self.input_dim = max(input_dim, 128)
         
         # Channel allocations
         self.intero_start = 0
@@ -75,7 +77,7 @@ class SensoryEncoder:
                 input_dim=input_dim,
                 norm_type=NormalizationType.ADAPTIVE,
                 noise_scale=0.03,  # Light noise for exploration
-                handle_outliers=True
+                handle_outliers=False # Sparse signals (e.g. seeing food) are NOT outliers
             )
         else:
             self.signal_pipeline = None
@@ -220,6 +222,9 @@ class ActionDecoder:
         self.approach_channel = 7    # Approach response
         self.mate_channel = 8        # Mating action
         self.call_channel = 9        # Vocalization
+        self.dig_channel = 10        # Digging
+        self.build_channel = 11      # Building
+        self.plant_channel = 12      # Planting (Cultivation)
         
     def decode(self, brain_output: np.ndarray, 
                creature: CreatureBody) -> Dict[str, float]:
@@ -234,8 +239,8 @@ class ActionDecoder:
             Dict of motor commands for creature._process_brain_output()
         """
         # Ensure we have enough output
-        if len(brain_output) < 10:
-            brain_output = np.pad(brain_output, (0, 10 - len(brain_output)))
+        if len(brain_output) < 13:
+            brain_output = np.pad(brain_output, (0, 13 - len(brain_output)))
         
         # Decode with sigmoid for 0-1 range
         def sigmoid(x):
@@ -263,6 +268,9 @@ class ActionDecoder:
         commands['drink'] = sigmoid(brain_output[self.drink_channel])
         commands['rest'] = sigmoid(brain_output[self.rest_channel])
         commands['mate'] = sigmoid(brain_output[self.mate_channel])
+        commands['dig'] = sigmoid(brain_output[self.dig_channel])
+        commands['build'] = sigmoid(brain_output[self.build_channel])
+        commands['plant'] = sigmoid(brain_output[self.plant_channel])
         
         # Combine flee/approach into movement bias
         flee_signal = sigmoid(brain_output[self.flee_channel])
@@ -307,6 +315,11 @@ class DriveNeuromodulatorBridge:
         Compute neuromodulator deltas based on drive changes.
         
         Returns dict of modulator_name → delta value
+        
+        NOTE: These deltas are applied every frame (~30-60Hz).
+        They must be very small to avoid runaway accumulation.
+        The homeostatic decay in KineticNeuromodulationSystem is weak
+        (0.02 * dt per frame), so we must keep additions even smaller.
         """
         changes = {
             'dopamine': 0.0,
@@ -322,67 +335,64 @@ class DriveNeuromodulatorBridge:
         }
         
         # Compute drive satisfaction/frustration
+        # NOTE: Scale these down since they're applied every frame
         for drive, level in current_drives.items():
             prev_level = self.prev_drives.get(drive, level)
             delta = prev_level - level  # Positive = drive reduced = satisfaction
             
             if delta > 0.01:
-                # Drive satisfaction → Dopamine + Endorphin
-                changes['dopamine'] += delta * 0.5
-                changes['endorphin'] += delta * 0.3
-                changes['serotonin'] += delta * 0.2
+                # Drive satisfaction → Dopamine + Endorphin (scaled down)
+                changes['dopamine'] += delta * 0.05
+                changes['endorphin'] += delta * 0.02
+                changes['serotonin'] += delta * 0.02
                 
             elif delta < -0.01:
-                # Drive frustration → Cortisol
-                changes['cortisol'] += abs(delta) * 0.4
+                # Drive frustration → VERY small cortisol bump
+                changes['cortisol'] += abs(delta) * 0.005  # Reduced from 0.05
         
         # Specific drive mappings
+        # NOTE: These are per-frame deltas, MUST be very small to prevent runaway
         
         # High hunger/thirst → Cortisol (STARVATION STRESS)
+        # Only critical levels trigger stress
         hunger = current_drives.get('hunger', 0)
-        if hunger > 0.8:
-            # Critical hunger - major stress
-            changes['cortisol'] += 0.15
-            changes['norepinephrine'] += 0.1
-            changes['adrenaline'] += 0.05
-        elif hunger > 0.6:
-            changes['cortisol'] += 0.05
-            changes['norepinephrine'] += 0.02
+        if hunger > 0.9:
+            # Critical hunger - stress
+            changes['cortisol'] += 0.002  # Reduced from 0.02
+            changes['norepinephrine'] += 0.005
+            changes['adrenaline'] += 0.002
         
         thirst = current_drives.get('thirst', 0)
-        if thirst > 0.8:
-            # Critical thirst - major stress
-            changes['cortisol'] += 0.2
-            changes['norepinephrine'] += 0.1
-            changes['adrenaline'] += 0.08
-        elif thirst > 0.6:
-            changes['cortisol'] += 0.06
-            changes['adrenaline'] += 0.02
+        if thirst > 0.9:
+            # Critical thirst - stress
+            changes['cortisol'] += 0.003  # Reduced from 0.03
+            changes['norepinephrine'] += 0.005
+            changes['adrenaline'] += 0.002
         
         # Safety drive (pain/fear) → Norepinephrine + Adrenaline
         safety = current_drives.get('safety', 0)
-        if safety > 0.3:
-            changes['norepinephrine'] += safety * 0.1
-            changes['adrenaline'] += safety * 0.15
-            # Stronger stress response to danger
-            changes['cortisol'] += safety * 0.2
+        if safety > 0.5:
+            changes['norepinephrine'] += safety * 0.005
+            changes['adrenaline'] += safety * 0.008
+            # Danger response - very small cortisol
+            changes['cortisol'] += safety * 0.003  # Reduced from 0.03
         
         # Reproduction drive → Oxytocin + Dopamine
         repro = current_drives.get('reproduction', 0)
         if repro > 0.5:
-            changes['oxytocin'] += repro * 0.1
-            changes['dopamine'] += repro * 0.05
+            changes['oxytocin'] += repro * 0.005
+            changes['dopamine'] += repro * 0.003
         
         # Exploration → Acetylcholine + Dopamine (curiosity)
         explore = current_drives.get('exploration', 0)
         if explore > 0.3:
-            changes['acetylcholine'] += explore * 0.1
-            changes['dopamine'] += explore * 0.03
+            changes['acetylcholine'] += explore * 0.005
+            changes['dopamine'] += explore * 0.003
         
         # Rest drive → GABA (need to slow down)
         rest = current_drives.get('rest', 0)
         if rest > 0.5:
-            changes['gaba'] += rest * 0.1
+            changes['gaba'] += rest * 0.005
         
         # Internal state changes
         
@@ -390,30 +400,30 @@ class DriveNeuromodulatorBridge:
         energy_now = current_internal.get('energy', 0.5)
         energy_prev = self.prev_internal.get('energy', energy_now)
         if energy_now > energy_prev + 0.01:
-            changes['serotonin'] += (energy_now - energy_prev) * 0.5
-            changes['dopamine'] += (energy_now - energy_prev) * 0.3
+            changes['serotonin'] += (energy_now - energy_prev) * 0.1
+            changes['dopamine'] += (energy_now - energy_prev) * 0.08
         
         # Pain → Endorphin (natural response)
         pain = current_internal.get('pain', 0)
-        if pain > 0.2:
-            changes['endorphin'] += pain * 0.1
-            changes['adrenaline'] += pain * 0.05
+        if pain > 0.3:
+            changes['endorphin'] += pain * 0.005
+            changes['adrenaline'] += pain * 0.003
             
-            # TRAUMA: Severe pain causes massive stress spike
-            if pain > 0.5:
-                changes['cortisol'] += (pain - 0.5) * 0.5
+            # Severe pain causes stress spike (but very small)
+            if pain > 0.6:
+                changes['cortisol'] += (pain - 0.6) * 0.01  # Reduced from 0.1
         
-        # Temperature discomfort → Cortisol
+        # Temperature discomfort → Cortisol (only extreme)
         temp = current_internal.get('temperature', 0.5)
         temp_discomfort = abs(temp - 0.5) * 2
-        if temp_discomfort > 0.3:
-            changes['cortisol'] += temp_discomfort * 0.05
+        if temp_discomfort > 0.5:
+            changes['cortisol'] += temp_discomfort * 0.001  # Reduced from 0.01
         
-        # Low health → Cortisol + dampen Dopamine
+        # Low health → Cortisol (only critical)
         health = current_internal.get('health', 1.0)
-        if health < 0.5:
-            changes['cortisol'] += (1 - health) * 0.1
-            changes['dopamine'] -= (1 - health) * 0.05
+        if health < 0.3:
+            changes['cortisol'] += (0.3 - health) * 0.005  # Reduced from 0.05
+            changes['dopamine'] -= (0.3 - health) * 0.002
         
         # Update previous state
         self.prev_drives = current_drives.copy()
@@ -464,6 +474,16 @@ class EmbodiedBrain:
         self.sensory_encoder = SensoryEncoder(input_dim=128)
         self.action_decoder = ActionDecoder(output_dim=64)
         self.neuro_bridge = DriveNeuromodulatorBridge()
+        
+        # Initialize Spatial Memory (Structure-based navigation)
+        # Scale resolution by brain size: Micro brains get coarse grids, Big brains get fine grids
+        # World assumed ~3000x3000 max for now
+        grid_res = 500 if brain_scale == 'micro' else 200
+        self.spatial_memory = SpatialMemorySystem(
+            world_width=3000, 
+            world_height=3000, 
+            grid_size=grid_res
+        )
         
         # Statistics
         self.total_reward = 0.0
@@ -544,6 +564,43 @@ class EmbodiedBrain:
         # Apply neuromodulator changes
         self._apply_neuromodulator_changes(neuro_changes)
         
+        # === SYSTEM 6: SPATIAL MEMORY UPDATE ===
+        # Update Place Cells and Hebbian Synapses based on experience
+        experiences = {}
+        
+        # Detect energy gain (Eating)
+        curr_energy = internal.get('energy', 0.5)
+        prev_energy = self.prev_internal.get('energy', curr_energy)
+        if curr_energy > prev_energy + 0.001:
+            experiences['energy_gain'] = curr_energy - prev_energy
+            
+        # Detect pain (Hazard)
+        experiences['pain'] = internal.get('pain', 0)
+        
+        # Update synapses
+        self.spatial_memory.update(
+            self.body.motor.x, self.body.motor.y, experiences, dt
+        )
+        
+        # Query for navigational target
+        nav_target = self.spatial_memory.get_navigation_gradient(drives)
+        
+        # If we have a spatial goal, encode it into brain input AND bias motor system
+        nav_bias_x, nav_bias_y = 0.0, 0.0
+        if nav_target:
+            tx, ty = nav_target
+            dx = tx - self.body.motor.x
+            dy = ty - self.body.motor.y
+            dist = np.sqrt(dx*dx + dy*dy) + 1e-6
+            nav_bias_x = dx / dist
+            nav_bias_y = dy / dist
+            
+            # Encode into specific brain input channels (e.g., 60-61)
+            # This allows the reservoir to "know" where it wants to go
+            if self.sensory_encoder.input_dim > 61:
+                brain_input[60] = nav_bias_x
+                brain_input[61] = nav_bias_y
+        
         # Compute reward and arousal for brain
         reward = self._compute_reward(sensory_data)
         arousal = self._compute_arousal(sensory_data)
@@ -562,13 +619,23 @@ class EmbodiedBrain:
         
         motor_commands = self.action_decoder.decode(brain_output, self.body)
         
+        # Blend Spatial Memory drive (Hippocampal override)
+        # If the creature remembers food is nearby and is hungry, it feels a "pull"
+        if nav_target:
+            # Strength of pull depends on hunger/fear intensity (already in nav_target logic)
+            # We add a subtle bias to the motor cortex
+            motor_commands['move_x'] = np.clip(motor_commands['move_x'] + nav_bias_x * 0.3, -1, 1)
+            motor_commands['move_y'] = np.clip(motor_commands['move_y'] + nav_bias_y * 0.3, -1, 1)
+        
+        
         # 5. Update body with motor commands
         self.body.update(dt, world, motor_commands)
         
         # 6. Track reward
         self.total_reward += reward
         
-        return {
+        # Store for brain inspector visualization
+        self.last_step_data = {
             'sensory_input': brain_input,
             'brain_output': brain_output,
             'motor_commands': motor_commands,
@@ -578,6 +645,8 @@ class EmbodiedBrain:
             'arousal': arousal,
             'alive': self.body.is_alive(),
         }
+        
+        return self.last_step_data
     
     def _compute_reward(self, sensory_data: Dict) -> float:
         """

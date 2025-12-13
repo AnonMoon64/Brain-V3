@@ -135,9 +135,10 @@ The brain is organized into three interacting subsystems:
 - Epigenetic switches gate learning modes
 
 ### Dynamic Neurogenesis
-- Neurons are created when novelty is high and dopamine is elevated
-- Neurons are pruned when inactive or during high cortisol (stress)
-- Brain structure evolves based on experience
+- **Emergent Novelty**: Neurons created when cortex can't explain inputs (unexplained_inputs accumulate)
+- Stress Gate: High cortisol (>0.7) blocks neurogenesis (biologically accurate)
+- Neurons pruned when inactive or during prolonged stress
+- Brain structure evolves based on actual experience, not arbitrary thresholds
 - Configurable neurogenesis rate and pruning thresholds
 
 ---
@@ -158,6 +159,7 @@ Creatures maintain internal balance:
 - **Nutrition**: Food fills stomach, converts to energy over time
 - **Health**: Damaged by hazards, heals when resting
 - **Fatigue**: Builds with activity, triggers sleep when high
+- **Age**: DNA-driven via `maturation_speed` gene (40s-5min to adulthood, not 2.7 hours!)
 
 ### Behavior States
 Creatures transition through behavioral states:
@@ -183,20 +185,131 @@ Creatures can find, pick up, and use tools in the world:
 - **Shells**: Scooping, protection
 - **Bones**: Digging, weapon
 
+**Automatic Pickup**: Creatures opportunistically pick up tools within 40px while wandering (curiosity reward).
 Tools become extensions of body schema through use (proprioceptive incorporation). Success with a tool strengthens neural pathways connecting action→tool→outcome.
 
 ### Procedural Language Evolution (TIER 4)
-Emergent communication through phonemes, gestures, and reinforcement:
+Emergent communication through phonemes, gestures, and **neural association learning**:
 - **Phoneme System**: Basic sound units (vowels: a/i/u/e/o, plosives: pa/ta/ka, nasals: ma/na, etc.)
 - **Gesture Primitives**: Visual signals (pointing, nodding, waving, raising arms, crouching)
 - **Symbol Creation**: New words emerge from random phoneme combinations + context
-- **Grounding**: Words become associated with meanings through use (food, water, danger, sleep, etc.)
+- **Grounding via Observation**: Words get meaning when listeners OBSERVE what speakers are doing
+  - Listener sees speaker's behavior state (SEEKING_FOOD, SEEKING_WATER, etc.)
+  - Listener checks what objects are near the speaker
+  - Neural association forms: word pattern + action pattern → Hebbian learning
+- **Neural Retrieval**: When creature is in similar state, brain activates associated word pattern
 - **Reinforcement Learning**: Successful communication strengthens word-meaning associations
-- **Social Transmission**: Creatures learn words by observing others' actions
-- **Cultural Language**: Population-wide conventions emerge when words are used successfully by multiple creatures
+- **Social Transmission**: Creatures learn words by observing others' actions - not being told meanings
+- **Cultural Language**: Population-wide conventions emerge when words spread through observation
 - **Vocabulary Pruning**: Ineffective words (low success rate) are forgotten over time
 
-Each creature develops unique vocabulary based on experience, then conventions emerge through interaction.
+Each creature develops unique vocabulary based on experience, then conventions emerge through observation and imitation.
+
+### Sexual Reproduction & Evolution (NEW)
+
+**1. Hormonal Dimorphism**
+- Males have higher testosterone baseline → more aggression, alertness, exploration
+- Females have higher estrogen baseline → more social, calming, nurturing
+- Hormone levels evolve separately over generations
+
+**2. Epigenetically-Inherited Trauma**
+- Near-death starvation leaves `starvation_memory` markers
+- Extreme pain events leave `pain_memory` markers
+- Offspring inherit elevated `inherited_stress` and `inherited_caution`
+- Transgenerational stress inheritance is REAL
+
+**3. Mate-Calling Behavior (Courtship)**
+- `MATE_CALLING` behavior state for courtship displays
+- Vocalizations when seeking/near mate
+- "Dancing" shimmy movements
+- Tool display (holding tools attracts mates)
+- Rituals evolve as brain learns what works
+
+**4. Sexual Strategy Polymorphism**
+- `reproductive_strategy`: 0=r-strategy, 1=K-strategy
+- `litter_size_tendency`: More or fewer offspring per mating
+- `parental_investment`: Energy devoted to offspring
+- Strategies evolve based on survival payoffs
+
+**5. Endocrine Cycles (Estrus/Heat)**
+- Females cycle through fertility windows, not constant fertility
+- `estrus_cycle_phase` tracks position in cycle
+- `in_heat` when in fertility window (~20% of cycle)
+- `pheromone_level` emitted during heat
+- Males detect pheromones → natural population waves
+
+**6. Hormone-Modulated Parental Bonding**
+- `parent_bond_strength` genetic tendency (0=neglectful, 1=devoted)
+- `parent_oxytocin` elevated when near offspring
+- Bonding becomes heritable through epigenetics
+
+**7. True Sexual Dimorphism Brain Wiring**
+- Males: Lower fear, higher curiosity → exploratory
+- Females: Higher social drive, slightly more cautious
+- Different survival strategies emerge from DNA
+
+### Advanced Evolution Features (NEW)
+
+**8. Mutable Neurotransmitter Receptors**
+- `dopamine_receptor_density` - affects reward sensitivity (0.5-1.5)
+- `serotonin_receptor_density` - affects mood stability
+- `cortisol_receptor_density` - affects stress reactivity
+- `oxytocin_receptor_density` - affects social bonding
+- Receptors adapt from life experience → drug-like personality differences
+
+**9. Lifetime Hormonal Arcs**
+- `life_stage`: juvenile → puberty → adult → elder
+- `puberty_onset_age` and `elder_onset_age` are heritable
+- `maturity_hormone_mult` peaks at adulthood, declines in old age
+- Each life stage has distinct personality chemistry
+
+**10. Mate Selection With Evolving Preferences**
+- `preferred_hue` - color preference (runaway sexual selection)
+- `preferred_size` - size preference
+- `preference_strength` - how picky (0=anyone, 1=very picky)
+- `display_trait_value` - this creature's attractiveness
+- Fisherian runaway: preferences and traits co-evolve
+
+**11. Tool Preference Heritability**
+- `preferred_tool_type`: stick, stone, leaf, shell, bone, or any
+- `tool_specialization`: 0=generalist, 1=specialist
+- Family lines specialize in specific tools → organic cultural divergence
+
+**12. Pregnancy/Gestation Costs**
+- `is_pregnant` and `gestation_progress` (0-1)
+- `pregnancy_energy_mult` = 1.5x hunger
+- `pregnancy_speed_mult` = 0.7x movement
+- More vulnerable → survival pressure drives strategy
+
+**13. Inbreeding Penalties**
+- `genetic_lineage_id` - unique family line ID
+- `parent_lineage_ids` - tracks ancestry
+- `inbreeding_coefficient`: 0=outbred, 0.5=siblings, 0.25=parent-child
+- High inbreeding → reduced fertility and immune strength
+
+**14. Energy Scaling With Body Size**
+- `body_size_mult` affects metabolic costs
+- Bigger creatures cost more energy, smaller cost less
+- Simple but massive impact on evolution
+
+**15. Computational Epigenetics**
+- `starvation_adaptation_active` - activates after severe hunger
+- `stress_adaptation_active` - activates after high cortisol
+- `epigenetic_metabolism_bonus` - efficiency boost from adaptations
+- Genes activate only under specific conditions → adaptive responses
+
+**16. Gut-Brain Axis (Microbiome)**
+- **Bidirectional communication** between gut bacteria and brain
+- **Microbiome composition** (Lactobacillus, Bifidobacteria, Enterococcus, pathogenic)
+- **Neurochemical production**:
+  - `gut_serotonin_production` - mood stability (from Bifidobacteria)
+  - `gut_gaba_production` - calmness (from Lactobacillus)
+  - `gut_dopamine_precursor` - reward sensitivity (from Enterococcus)
+  - `gut_inflammation` - anxiety/fatigue (from pathogens)
+- **Diet affects microbiome**: Well-fed → good bacteria thrive
+- **Stress affects gut**: High cortisol damages gut health
+- **Social transmission**: Microbiome spreads through proximity
+- **Maternal inheritance**: Offspring inherit mother's microbiome
 
 ### Sleep System
 - Creatures sleep when energy drops below 20%

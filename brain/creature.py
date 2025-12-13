@@ -15,6 +15,27 @@ import numpy as np
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any
 from enum import Enum, auto
+from .microbiome import Microbiome
+
+
+# =============================================================================
+# GENDER - Biological sex for breeding
+# =============================================================================
+
+class Gender(Enum):
+    """Biological sex - affects breeding compatibility."""
+    MALE = "male"
+    FEMALE = "female"
+    
+    @property
+    def symbol(self) -> str:
+        """Get display symbol for gender."""
+        return "♂" if self == Gender.MALE else "♀"
+    
+    @classmethod
+    def random(cls) -> 'Gender':
+        """Randomly assign gender (50/50 chance)."""
+        return cls.MALE if np.random.random() < 0.5 else cls.FEMALE
 
 
 # =============================================================================
@@ -43,6 +64,9 @@ class Phenotype:
     pattern_color: float = 0.3      # Secondary color hue
     pattern_density: float = 0.5    # How much pattern coverage
     
+    # Gender (biological sex)
+    gender: 'Gender' = None         # MALE or FEMALE - set on spawn or random
+    
     # Appendages
     limb_count: int = 4             # Number of limbs
     has_tail: bool = True
@@ -65,6 +89,10 @@ class Phenotype:
     max_energy: float = 100.0       # Maximum energy storage
     digestive_efficiency: float = 1.0 # Nutrient extraction rate
     heat_generation: float = 1.0    # Thermoregulation efficiency
+    
+    # Neurochemistry (SYSTEM 7: Genetic Chemical Baselines)
+    dopamine_base: float = 0.5      # Genetic baseline for reward tracking
+    cortisol_base: float = 0.1      # Genetic baseline for stress tracking
     
     # Behavior (Genes)
     bravery: float = 0.5            # 0.0 = Coward, 1.0 = Brave (affects flee duration)
@@ -129,6 +157,8 @@ class Phenotype:
             max_energy=params.get('max_energy', 100),
             digestive_efficiency=params.get('digestive_efficiency', 1.0),
             heat_generation=params.get('heat_generation', 1.0),
+            dopamine_base=0.5 + 0.1 * params.get('dopamine_base', 0.0), # centered on 0.5
+            cortisol_base=0.1 + 0.1 * params.get('cortisol_base', 0.0), # centered on 0.1
         )
 
 
@@ -172,6 +202,125 @@ class Homeostasis:
     immune_strength: float = 1.0    # Resistance to disease
     healing_rate: float = 0.001     # HP recovery per tick (very slow natural healing)
     
+    # DNA-driven aging
+    maturation_speed: float = 0.5   # From maturation_rate gene (0=slow 5min, 1=fast 1min)
+    
+    # Reproduction tracking
+    mating_cooldown: float = 0.0    # Time remaining before can mate again
+    times_mated: int = 0            # Total mating count
+    last_mate_id: str = ""          # ID of last mate (to limit babies per pair)
+    
+    # === HORMONAL DIMORPHISM (1) ===
+    # Gender-specific baseline chemical levels (evolved separately)
+    # These modify the base neuromodulator levels
+    testosterone_base: float = 0.5   # Higher in males -> more aggression, NE
+    estrogen_base: float = 0.5       # Higher in females -> more oxytocin, serotonin
+    
+    # Genetic baselines (passed from Phenotype)
+    genetic_dopamine_base: float = 0.5
+    genetic_cortisol_base: float = 0.1
+    
+    # Trauma Loop State (SYSTEM 8)
+    in_trauma_loop: bool = False     # Persistent stress state
+    
+    # === EPIGENETIC TRAUMA INHERITANCE (2) ===
+    # Stress markers inherited from parents who survived trauma
+    inherited_caution: float = 0.0   # 0-1, higher = more cautious offspring
+    inherited_stress: float = 0.0    # 0-1, higher = elevated baseline cortisol
+    trauma_markers: int = 0          # Count of traumatic events survived
+    starvation_memory: float = 0.0   # Inherited if parent nearly starved
+    pain_memory: float = 0.0         # Inherited if parent suffered extreme pain
+    
+    # === ENDOCRINE CYCLES / ESTRUS (5) ===
+    # Females cycle into fertility windows, not constant
+    estrus_cycle_phase: float = 0.0  # 0-1 cycle position
+    estrus_cycle_length: float = 60.0  # Seconds per full cycle (DNA-driven)
+    in_heat: bool = False            # Currently in fertility window
+    pheromone_level: float = 0.0     # Emitted when in heat, detected by males
+    
+    # === PARENTAL BONDING (7) ===
+    parent_bond_strength: float = 0.5  # Genetic tendency for bonding (0=neglectful, 1=devoted)
+    bonded_offspring_ids: list = field(default_factory=list)  # IDs of bonded children
+    parent_oxytocin: float = 0.0     # Elevated when near own offspring
+    
+    # === SEXUAL STRATEGY POLYMORPHISM (4) ===
+    # r-strategy (many offspring, low care) vs K-strategy (few offspring, high care)
+    reproductive_strategy: float = 0.5  # 0=r-strategy, 1=K-strategy
+    litter_size_tendency: float = 1.0   # Expected offspring per mating (1-5)
+    parental_investment: float = 0.5    # How much energy invested per offspring
+    
+    # === MUTABLE NEUROTRANSMITTER RECEPTORS (3) ===
+    # Receptor densities change from life experience - "drug-like" personality differences
+    dopamine_receptor_density: float = 1.0   # 0.5-1.5, affects reward sensitivity
+    serotonin_receptor_density: float = 1.0  # Affects mood stability
+    cortisol_receptor_density: float = 1.0   # Affects stress reactivity
+    oxytocin_receptor_density: float = 1.0   # Affects social bonding
+    
+    # === LIFETIME HORMONAL ARCS (7) ===
+    # Puberty -> maturity -> elder decline with shifting chemistry
+    life_stage: str = "juvenile"  # juvenile, puberty, adult, elder
+    puberty_onset_age: float = 0.15  # Age when puberty starts
+    elder_onset_age: float = 0.7     # Age when decline begins
+    maturity_hormone_mult: float = 1.0  # Peak at maturity, declines in old age
+    
+    # === MATE SELECTION PREFERENCES (8) ===
+    # Creatures evolve what they find attractive - runaway sexual selection
+    preferred_hue: float = 0.5       # Color preference (0-1)
+    preferred_size: float = 1.0      # Size preference multiplier
+    preference_strength: float = 0.3  # How picky (0=accepts anyone, 1=very picky)
+    display_trait_value: float = 0.5  # This creature's attractiveness display
+    
+    # === TOOL PREFERENCE HERITABILITY (9) ===
+    preferred_tool_type: str = "any"  # stick, stone, leaf, shell, bone, any
+    tool_specialization: float = 0.0  # 0=generalist, 1=specialist
+    
+    # === PREGNANCY/GESTATION COSTS (11) ===
+    is_pregnant: bool = False
+    gestation_progress: float = 0.0   # 0-1, birth at 1.0
+    gestation_duration: float = 30.0  # Seconds to full term
+    pregnancy_energy_mult: float = 1.5  # Eat more when pregnant
+    pregnancy_speed_mult: float = 0.7   # Move slower when pregnant
+    
+    # === INBREEDING TRACKING (12) ===
+    genetic_lineage_id: str = ""      # Unique ID for genetic line
+    parent_lineage_ids: list = field(default_factory=list)  # Parents' lineage IDs
+    inbreeding_coefficient: float = 0.0  # 0=outbred, 1=highly inbred
+    
+    # === ENERGY SCALING WITH BODY SIZE (14) ===
+    body_size_mult: float = 1.0       # Affects metabolic costs
+    
+    # === COMPUTATIONAL EPIGENETICS (4) ===
+    # Genes that only activate under specific conditions
+    starvation_adaptation_active: bool = False  # Activates after severe hunger
+    stress_adaptation_active: bool = False       # Activates after high cortisol
+    social_isolation_active: bool = False        # Activates after prolonged alone time
+    epigenetic_metabolism_bonus: float = 0.0     # Efficiency boost from adaptations
+    
+    # === GUT-BRAIN AXIS / MICROBIOME (5) ===
+    # Bidirectional communication between gut microbiome and brain
+    # Microbiome produces neurochemicals that affect mood and behavior
+    
+    # Full Microbiome Simulation
+    complex_microbiome: Microbiome = field(default_factory=Microbiome)
+    pending_diet: Dict[str, float] = field(default_factory=dict) # Meals eaten this frame
+    
+    # Detailed Microbiome Stats (Read from complex_microbiome)
+    microbiome_lactobacillus: float = 0.25   # Produces GABA (calming)
+    microbiome_bifidobacteria: float = 0.25  # Produces serotonin precursors
+    microbiome_enterococcus: float = 0.25    # Produces dopamine precursors
+    microbiome_pathogenic: float = 0.05      # Bad bacteria (causes inflammation)
+    microbiome_diversity: float = 0.7        # Overall diversity (0=monoculture, 1=diverse)
+    
+    # Microbiome effects on brain
+    gut_serotonin_production: float = 0.0    # Contributes to mood stability
+    gut_gaba_production: float = 0.0         # Contributes to calmness
+    gut_dopamine_precursor: float = 0.0      # Contributes to reward sensitivity
+    gut_inflammation: float = 0.0            # Causes anxiety and fatigue
+    
+    # Microbiome health
+    gut_health: float = 1.0                  # Overall gut health (0-1)
+    last_social_microbiome_transfer: float = 0.0  # Time since last bacterial exchange
+    
     # Thresholds for drive activation
     HUNGER_THRESHOLD = 0.7   # Start seeking food when nutrition < 70%
     THIRST_THRESHOLD = 0.7   # Start seeking water when hydration < 70%
@@ -181,11 +330,12 @@ class Homeostasis:
     COLD_THRESHOLD = 0.3
     HOT_THRESHOLD = 0.7
     PAIN_THRESHOLD = 0.3
-    FERTILITY_THRESHOLD = 0.6
+    FERTILITY_THRESHOLD = 0.2  # Was 0.6 - Allow mating behaviors even when not at peak estrus
     
     def update(self, dt: float, metabolic_rate: float = 1.0, 
                ambient_temp: float = 20.0, activity_level: float = 0.5,
-               digestive_efficiency: float = 1.0, heat_generation: float = 1.0):
+               digestive_efficiency: float = 1.0, heat_generation: float = 1.0,
+               aging_speed_setting: float = 1.0):
         """
         Update homeostatic state over time.
         
@@ -194,8 +344,10 @@ class Homeostasis:
             metabolic_rate: Creature's metabolism
             ambient_temp: Environmental temperature
             activity_level: How active the creature is (0-1)
+            activity_level: How active the creature is (0-1)
             digestive_efficiency: Nutrient extraction rate
             heat_generation: Thermoregulation efficiency
+            aging_speed_setting: Real hours per creature year (default 1.0)
         """
         # Metabolism slows during sleep (body conserves resources)
         sleep_multiplier = 0.3 if self.is_sleeping else 1.0
@@ -245,13 +397,13 @@ class Homeostasis:
             self.energy -= 0.001 * abs(self.temperature - 0.5) * dt
         
         # Fatigue increases with activity
-        fatigue_gain = 0.001 * activity_level * dt
+        fatigue_gain = 0.0002 * activity_level * dt  # Was 0.001 - Reduced to prevent constant tiredness
         fatigue_recovery = 0.0005 * (1 - activity_level) * dt
         self.fatigue = np.clip(self.fatigue + fatigue_gain - fatigue_recovery, 0, 1)
         
         # Sleepiness increases with fatigue and time awake
         if not self.is_sleeping:
-            sleepiness_gain = 0.0003 * dt * (1 + self.fatigue)
+            sleepiness_gain = 0.00005 * dt * (1 + self.fatigue)  # Was 0.0003 - Reduced significantly
             self.sleepiness = min(1.0, self.sleepiness + sleepiness_gain)
             
             # Auto-sleep when exhausted
@@ -264,11 +416,40 @@ class Homeostasis:
         # Pain decays faster now - creatures recover from discomfort
         self.pain = max(0, self.pain - 0.05 * dt)
         
-        # Cortisol decays slowly (stress hormone takes time to clear)
-        self.cortisol = max(0.1, self.cortisol - 0.02 * dt)  # Never goes below baseline 0.1
+        # Cortisol decays toward baseline (stress hormone clears when not stressed)
+        # Decay rate is proportional to how far above baseline we are
+        # SYSTEM 7: Use genetic baseline
+        cortisol_baseline = self.genetic_cortisol_base + getattr(self, 'inherited_stress', 0.0) * 0.2
         
-        # Age (very slow)
-        self.age += 0.00001 * dt
+        # SYSTEM 8: Trauma Loop - Persistent stress
+        if self.cortisol > 0.9:
+            self.in_trauma_loop = True
+        elif self.cortisol < 0.3:
+            self.in_trauma_loop = False
+            
+        cortisol_excess = self.cortisol - cortisol_baseline
+        if cortisol_excess > 0:
+            # Faster decay when further from baseline (exponential decay)
+            decay_rate = 0.1 * (1.0 + cortisol_excess)  # 0.1 to 0.2 per second
+            
+            # Trauma loop prevents clearing
+            if self.in_trauma_loop:
+                decay_rate *= 0.2  # 80% slower decay
+                
+            self.cortisol = max(cortisol_baseline, self.cortisol - decay_rate * dt)
+        
+        # Cap cortisol at 1.0 to prevent infinite buildup
+        self.cortisol = min(1.0, self.cortisol)
+        
+        # DNA-driven aging (Scaled by settings)
+        # Setting: 1.0 = 1 hour lifespan (3600s)
+        # Formula: Rate = (1.0 / (3600 * setting)) * (0.5 + 1.0 * maturation_speed)
+        base_lifespan_seconds = 3600.0 * max(0.01, aging_speed_setting)
+        base_rate = 1.0 / base_lifespan_seconds
+        
+        # Genes modulate this (0.5x to ~1.5x)
+        age_rate = base_rate * (0.5 + 1.2 * self.maturation_speed)
+        self.age += age_rate * dt
         
         # Fertility cycles (peaks, then declines)
         if self.age > 0.1 and self.age < 0.8:
@@ -278,42 +459,190 @@ class Homeostasis:
         else:
             self.fertility = 0
         
+        # Mating cooldown decreases over time
+        if self.mating_cooldown > 0:
+            self.mating_cooldown = max(0, self.mating_cooldown - dt)
+        
+        # === ESTRUS CYCLE (5) - Females cycle into fertility windows ===
+        # Only applies to females (estrogen_base > 0.5 indicates female)
+        if self.estrogen_base > 0.5 and self.age > 0.1:
+            # Advance cycle phase
+            self.estrus_cycle_phase += dt / self.estrus_cycle_length
+            if self.estrus_cycle_phase > 1.0:
+                self.estrus_cycle_phase = 0.0
+            
+            # In heat during peak of cycle (20% window)
+            cycle_peak = 0.5
+            self.in_heat = abs(self.estrus_cycle_phase - cycle_peak) < 0.1
+            
+            # Pheromone emission when in heat
+            if self.in_heat:
+                self.pheromone_level = min(1.0, self.pheromone_level + 0.1 * dt)
+                # Fertility boosted during heat
+                self.fertility = min(1.0, self.fertility * 1.5)
+            else:
+                self.pheromone_level = max(0, self.pheromone_level - 0.2 * dt)
+                # Fertility reduced outside heat
+                self.fertility *= 0.3
+        
+        # === EPIGENETIC TRAUMA TRACKING (2) ===
+        # Record trauma events (starvation, extreme pain)
+        if self.energy < 0.1 and self.health < 0.3:
+            # Near-death starvation - record trauma
+            self.trauma_markers += 1
+            self.starvation_memory = min(1.0, self.starvation_memory + 0.1)
+        
+        if self.pain > 0.8:
+            # Extreme pain event - record trauma  
+            self.trauma_markers += 1
+            self.pain_memory = min(1.0, self.pain_memory + 0.1)
+        
+        # === LIFETIME HORMONAL ARCS (7) ===
+        # Update life stage based on age
+        if self.age < self.puberty_onset_age:
+            self.life_stage = "juvenile"
+            self.maturity_hormone_mult = 0.5  # Low hormones in childhood
+        elif self.age < 0.3:
+            self.life_stage = "puberty"
+            self.maturity_hormone_mult = 0.8 + (self.age - self.puberty_onset_age) * 2  # Rising
+        elif self.age < self.elder_onset_age:
+            self.life_stage = "adult"
+            self.maturity_hormone_mult = 1.0  # Peak hormones
+        else:
+            self.life_stage = "elder"
+            # Declining hormones in old age
+            self.maturity_hormone_mult = max(0.3, 1.0 - (self.age - self.elder_onset_age) * 2)
+        
+        # === MUTABLE RECEPTOR PLASTICITY (3) ===
+        # Receptors adapt to experience - high exposure -> downregulation
+        # Dopamine: frequent rewards -> tolerance
+        # Cortisol: chronic stress -> blunted response
+        # These shift slowly over creature's lifetime
+        
+        # === PREGNANCY PROGRESSION (11) ===
+        if self.is_pregnant:
+            self.gestation_progress += dt / self.gestation_duration
+            # Pregnancy costs extra energy
+            # (Applied in metabolic calculation)
+        
+        # === COMPUTATIONAL EPIGENETICS (4) ===
+        # Activate adaptive genes under specific conditions
+        if self.starvation_memory > 0.5 and not self.starvation_adaptation_active:
+            self.starvation_adaptation_active = True
+            self.epigenetic_metabolism_bonus += 0.1  # Better food efficiency
+        
+        if self.cortisol > 0.8 and self.trauma_markers > 3:
+            if not self.stress_adaptation_active:
+                self.stress_adaptation_active = True
+                self.cortisol_receptor_density *= 0.9  # Blunted stress response
+        
+        # === INBREEDING EFFECTS (12) ===
+        # High inbreeding reduces fertility and health
+        if self.inbreeding_coefficient > 0.5:
+            self.fertility *= (1.0 - self.inbreeding_coefficient * 0.5)
+            self.immune_strength *= (1.0 - self.inbreeding_coefficient * 0.3)
+        
+        # === GUT-BRAIN AXIS UPDATE (5) ===
+        # Microbiome produces neurochemicals that affect brain
+        
+        # Update the complex microbiome simulation
+        # It handles population growth, competition, and death
+        self.complex_microbiome.update(dt, diet=self.pending_diet, stress=self.cortisol)
+        self.pending_diet = {} # Clear accumulated diet for next frame
+        
+        # Get effects from simulation
+        neuro_effects = self.complex_microbiome.get_neurochemical_effects()
+        
+        # Map simulation outputs to creature physiology
+        self.gut_serotonin_production = neuro_effects['serotonin'] * self.gut_health
+        self.gut_gaba_production = neuro_effects['gaba'] * self.gut_health
+        self.gut_dopamine_precursor = neuro_effects['dopamine'] * self.gut_health
+        
+        # Pathogens cause inflammation
+        # Simplified mapping: map specific strains to "pathogenic" score
+        # For now, just assume inflammation effect IS the pathogenic score
+        # In reality, we'd check for specific bad strains
+        self.gut_inflammation = max(0, -self.complex_microbiome.get_immune_modifier()) 
+        # (Negative immune modifier implies compromised system/inflammation in this specific model's context or just explicit inflammation effect which isn't separate)
+        # Actually Microbiome.BacterialStrain has inflammation_effect. 
+        # But get_neurochemical_effects doesn't return it.
+        # Let's check strains manually for display stats
+        
+        # Update display stats (approximate mapping for GUI)
+        pops = self.complex_microbiome.populations
+        total_pop = sum(pops.values()) + 0.0001
+        
+        self.microbiome_lactobacillus = sum(p for id, p in pops.items() if 'lacto' in id) / total_pop
+        self.microbiome_bifidobacteria = sum(p for id, p in pops.items() if 'bifido' in id) / total_pop
+        self.microbiome_enterococcus = sum(p for id, p in pops.items() if 'firm' in id) / total_pop # Approx mapping
+        self.microbiome_pathogenic = sum(p for id, p in pops.items() if 'proteo' in id) / total_pop
+        
+        self.microbiome_diversity = self.complex_microbiome.get_diversity()
+        
+        # Gut Health Logic (Simpler now)
+        # High stress damages gut (kill beneficials handled inside Microbiome.update)
+        # Here we just track the lining health
+        if self.cortisol > 0.6:
+            self.gut_health = max(0.3, self.gut_health - 0.005 * dt * self.cortisol)
+        else:
+             self.gut_health = min(1.0, self.gut_health + 0.002 * dt)
+             
+        # Inflammation feedback
+        if self.gut_inflammation > 0.1:
+             self.cortisol = min(1.0, self.cortisol + self.gut_inflammation * 0.05 * dt)
+             
+        # Apply metabolic modifier
+        # Better microbiome = more energy from food
+        metabolic_mod = self.complex_microbiome.get_metabolism_modifier()
+        self.epigenetic_metabolism_bonus = max(self.epigenetic_metabolism_bonus, metabolic_mod * 0.2)
+        
+        # === INHERITED STRESS EFFECTS (2) ===
+        # Inherited trauma elevates baseline stress
+        base_cortisol = 0.1 + self.inherited_stress * 0.3
+        
+        # === HORMONAL DIMORPHISM EFFECTS (1) ===
+        # Testosterone (males) -> lower baseline cortisol decay (stays alert)
+        # Estrogen (females) -> faster cortisol decay (calms faster) 
+        # Gut GABA also helps calm down
+        # Note: This decay is applied HERE, not in update() to avoid double-decay
+        hormonal_decay_mult = 1.0 + self.estrogen_base * 0.5 - self.testosterone_base * 0.3 + self.gut_gaba_production * 0.3
+        hormonal_decay = 0.15 * hormonal_decay_mult * dt  # 0.1-0.2 per second
+        self.cortisol = max(base_cortisol, self.cortisol - hormonal_decay)
+        
         # Starvation damage - die faster when starving
         # Internal discomfort (not flee-worthy, just motivation to eat)
+        # NOTE: Cortisol increases are MUCH smaller now to balance with decay
         if self.energy < 0.05:
             self.health -= 0.15 * dt  # Critical starvation - die fast
             self.pain = min(0.3, self.pain + 0.05 * dt)  # Capped mild pain
-            self.cortisol = min(1.0, self.cortisol + 0.2 * dt)  # Major stress
+            self.cortisol = min(1.0, self.cortisol + 0.05 * dt)  # Stress (reduced from 0.3)
         elif self.energy < 0.15:
             self.health -= 0.08 * dt  # Moderate starvation damage
             self.pain = min(0.2, self.pain + 0.02 * dt)  # Very mild
-            self.cortisol = min(0.8, self.cortisol + 0.1 * dt)  # Stress buildup
-        elif self.energy < 0.3:
-            # Warning zone - stress but no damage yet
-            self.cortisol = min(0.5, self.cortisol + 0.03 * dt)
+            self.cortisol = min(0.7, self.cortisol + 0.02 * dt)  # Mild stress (reduced from 0.15)
+        # Note: energy < 0.3 is just hungry, not stressful - no cortisol boost
         
         # Dehydration damage - more severe than starvation
         if self.hydration < 0.05:
             self.health -= 0.2 * dt  # Critical dehydration
             self.pain = min(0.3, self.pain + 0.05 * dt)
-            self.cortisol = min(1.0, self.cortisol + 0.25 * dt)  # Severe stress
+            self.cortisol = min(1.0, self.cortisol + 0.06 * dt)  # Stress (reduced from 0.35)
         elif self.hydration < 0.15:
             self.health -= 0.1 * dt
             self.pain = min(0.2, self.pain + 0.02 * dt)
-            self.cortisol = min(0.8, self.cortisol + 0.12 * dt)
-        elif self.hydration < 0.3:
-            self.cortisol = min(0.5, self.cortisol + 0.04 * dt)
+            self.cortisol = min(0.7, self.cortisol + 0.02 * dt)  # Mild stress (reduced from 0.15)
+        # Note: hydration < 0.3 is just thirsty, not stressful - no cortisol boost
         
         # Suffocation damage (drowning)
         if self.oxygen < 0.1:
             self.health -= 0.1 * dt
             self.pain = min(1.0, self.pain + 0.15 * dt)
         
-        # Additional nutrition-based starvation (when stomach is empty)
-        if self.nutrition < 0.05 and self.energy < 0.3:
-            # No food in stomach AND low energy = starving
+        # Additional nutrition-based starvation (when stomach is empty AND critically low energy)
+        if self.nutrition < 0.05 and self.energy < 0.15:
+            # No food in stomach AND very low energy = starving
             self.health -= 0.1 * dt
-            self.cortisol = min(1.0, self.cortisol + 0.15 * dt)
+            self.cortisol = min(1.0, self.cortisol + 0.03 * dt)  # Reduced from 0.2
         
         # Healing ONLY happens when well-fed and hydrated (after damage checks)
         # Cannot heal while starving/dehydrated
@@ -327,10 +656,14 @@ class Homeostasis:
             self.energy -= heal_amount * 0.5  # Healing costs energy
     
     def _sleep_update(self, dt: float):
-        """Update sleep state."""
+        """Update sleep state - recover energy and reduce fatigue."""
+        # Recover energy during sleep (faster than awake)
+        energy_recovery = 0.02 * dt  # 2% per second - creatures recover quickly
+        self.energy = min(1.0, self.energy + energy_recovery)
+        
         # Recover fatigue and sleepiness
-        self.fatigue = max(0, self.fatigue - 0.003 * dt)
-        self.sleepiness = max(0, self.sleepiness - 0.002 * dt)
+        self.fatigue = max(0, self.fatigue - 0.01 * dt)  # Increased from 0.003
+        self.sleepiness = max(0, self.sleepiness - 0.005 * dt)  # Increased from 0.002
         
         # Sleep depth cycles (REM cycles)
         cycle_period = 50.0  # Time units per sleep cycle
@@ -339,8 +672,8 @@ class Homeostasis:
         # Dream intensity peaks during deep sleep
         self.dream_intensity = self.sleep_depth * (0.5 + 0.5 * np.random.random())
         
-        # Wake up when recovered
-        if self.sleepiness < 0.1 and self.fatigue < 0.2:
+        # Wake up when recovered (energy > 60% OR fatigue < 20%)
+        if self.energy > 0.6 or (self.sleepiness < 0.1 and self.fatigue < 0.2):
             self.wake_up()
     
     def start_sleep(self):
@@ -372,9 +705,34 @@ class Homeostasis:
         if self.is_sleeping and self.pain > 0.3:
             self.wake_up()
     
-    def eat(self, nutrition_value: float):
+    def eat(self, nutrition_value: float, food_type: str = 'plant'):
         """Consume food."""
         self.nutrition = min(1, self.nutrition + nutrition_value / 100)
+        
+        # Register meal for microbiome
+        # Simple mapping of food types to nutrients
+        nutrients = {}
+        if food_type == 'plant':
+            nutrients['fiber'] = 0.6
+            nutrients['sugar'] = 0.2
+            nutrients['protein'] = 0.1
+        elif food_type == 'fruit':
+            nutrients['sugar'] = 0.7
+            nutrients['fiber'] = 0.2
+        elif food_type == 'meat':
+            nutrients['protein'] = 0.6
+            nutrients['fat'] = 0.3
+        elif food_type == 'corpse':
+            nutrients['protein'] = 0.5
+            nutrients['fat'] = 0.4
+            nutrients['sugar'] = 0.0
+        else:
+            nutrients['sugar'] = 0.5 # Default junk food?
+            
+        # Add to pending diet (accumulate if multiple bites)
+        for n, amount in nutrients.items():
+            current = self.pending_diet.get(n, 0)
+            self.pending_diet[n] = current + amount * (nutrition_value / 50.0) # Scale by amount eaten
     
     def drink(self, amount: float = 0.3):
         """Drink water."""
@@ -448,8 +806,14 @@ class Homeostasis:
         else:
             drives['sleep'] = 0
         
-        # Reproduction
-        if self.fertility > self.FERTILITY_THRESHOLD and self.energy > 0.5 and not self.is_sleeping:
+        # Reproduction - requires energy, fertility, not sleeping, AND no cooldown
+        can_reproduce = (
+            self.fertility > self.FERTILITY_THRESHOLD and 
+            self.energy > 0.5 and 
+            not self.is_sleeping and
+            self.mating_cooldown <= 0
+        )
+        if can_reproduce:
             drives['reproduction'] = self.fertility
         else:
             drives['reproduction'] = 0
@@ -485,6 +849,9 @@ class Action(Enum):
     CALL = auto()          # Vocalization
     INTERACT = auto()      # Generic interaction
     SPEAK = auto()         # Language
+    DIG = auto()
+    BUILD = auto()
+    PLANT = auto()
 
 
 @dataclass
@@ -540,6 +907,12 @@ class CreatureBody:
         """
         self.phenotype = phenotype or Phenotype()
         self.homeostasis = Homeostasis()
+        
+        # SYSTEM 7: Initialize genetic baselines from phenotype
+        if hasattr(self.phenotype, 'dopamine_base'):
+             self.homeostasis.genetic_dopamine_base = self.phenotype.dopamine_base
+        if hasattr(self.phenotype, 'cortisol_base'):
+             self.homeostasis.genetic_cortisol_base = self.phenotype.cortisol_base
         self.motor = MotorState(x=x, y=y)
         
         # Unique ID
@@ -550,8 +923,11 @@ class CreatureBody:
         self.food_eaten = 0
         self.distance_traveled = 0.0
         self.offspring_count = 0
+        self.blocks_dug = 0
+        self.blocks_built = 0
         
-    def update(self, dt: float, world, brain_output: Optional[Dict] = None):
+    def update(self, dt: float, world, brain_output: Optional[Dict] = None, 
+               aging_speed_setting: float = 1.0):
         """
         Update body state.
         
@@ -559,6 +935,7 @@ class CreatureBody:
             dt: Time delta
             world: World object for physics/sensing
             brain_output: Optional motor commands from brain
+            aging_speed_setting: Real hours per creature year
         """
         self.lifetime += dt
         
@@ -573,7 +950,8 @@ class CreatureBody:
         self.homeostasis.update(dt, self.phenotype.metabolic_rate, 
                                ambient_temp, activity,
                                digestive_efficiency=self.phenotype.digestive_efficiency,
-                               heat_generation=self.phenotype.heat_generation)
+                               heat_generation=self.phenotype.heat_generation,
+                               aging_speed_setting=aging_speed_setting)
         
         # Check hazards - check tile creature is standing on (y+5 to catch the ground tile)
         # Check hazards/anomalies
@@ -727,7 +1105,7 @@ class CreatureBody:
             if nearby_food:
                 food = nearby_food[0]
                 nutrition = world.eat_food(food, 0.3)
-                self.homeostasis.eat(nutrition)
+                self.homeostasis.eat(nutrition, food_type=food.get('type', 'plant'))
                 self.food_eaten += 1
         
         # Drinking (near water OR in water)
@@ -741,6 +1119,41 @@ class CreatureBody:
         # Sleep action
         if output.get('sleep', 0) > 0.5 and self.homeostasis.sleepiness > 0.4:
             self.homeostasis.start_sleep()
+            
+        # DIG action
+        if output.get('dig', 0) > 0.6:
+            self.motor.current_action = Action.DIG
+            # Determine target tile
+            reach = 25.0
+            tx = self.motor.x + (reach if self.motor.facing_right else -reach)
+            ty = self.motor.y + 10 # Slightly down
+            if world.dig(tx, ty):
+                 self.homeostasis.energy -= 0.02 # Cost
+                 self.homeostasis.fatigue += 0.01
+                 self.blocks_dug += 1
+                 
+        # BUILD action
+        if output.get('build', 0) > 0.6:
+            self.motor.current_action = Action.BUILD
+            # Determine target tile
+            reach = 25.0
+            tx = self.motor.x + (reach if self.motor.facing_right else -reach)
+            ty = self.motor.y
+            if world.build(tx, ty):
+                 self.homeostasis.energy -= 0.03 # Cost
+                 self.homeostasis.fatigue += 0.01
+                 self.blocks_built += 1
+                 
+        # PLANT action
+        if output.get('plant', 0) > 0.6:
+            self.motor.current_action = Action.PLANT
+            # Determine target tile
+            reach = 25.0
+            tx = self.motor.x + (reach if self.motor.facing_right else -reach)
+            ty = self.motor.y + 10
+            if hasattr(world, 'plant_seed') and world.plant_seed(tx, ty):
+                 self.homeostasis.energy -= 0.05 # Cost
+                 self.homeostasis.fatigue += 0.01
     
     def get_sensory_input(self, world, other_creatures: List['CreatureBody'] = None) -> Dict:
         """

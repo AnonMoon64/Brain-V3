@@ -29,6 +29,9 @@ class BehaviorState(Enum):
     RESTING = auto()        # Recovering energy
     SLEEPING = auto()       # Deep rest, minimal awareness
     SOCIALIZING = auto()    # Interacting with others
+    # Mating behaviors
+    MATE_CALLING = auto()   # Courtship display: dancing, vocalizing, showing objects
+    MATING = auto()         # Actively mating (brief)
     # TIER 4: Tool Use States
     SEEKING_TOOL = auto()   # Moving toward a tool
     PICKING_UP = auto()     # Grasping an object

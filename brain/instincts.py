@@ -121,7 +121,7 @@ INHIBITION_RULES = [
     # Sleepiness inhibits everything except survival
     (InstinctType.SEEK_SLEEP, InstinctType.EXPLORE_NOVEL, 0.8),
     (InstinctType.SEEK_SLEEP, InstinctType.SEEK_FOOD, 0.3),
-    (InstinctType.SEEK_SLEEP, InstinctType.APPROACH_MATE, 0.7),
+    (InstinctType.SEEK_SLEEP, InstinctType.APPROACH_MATE, 0.3), # Was 0.7 - Allow mating even if tired
     
     # Mating focus inhibits exploration
     (InstinctType.APPROACH_MATE, InstinctType.EXPLORE_NOVEL, 0.6),
@@ -296,8 +296,8 @@ class InstinctSystem:
             ),
             InstinctType.APPROACH_MATE: Instinct(
                 type=InstinctType.APPROACH_MATE,
-                base_strength=0.8 + drive_params.get('social', 0.5) * 0.4,
-                threshold=0.5
+                base_strength=1.2 + drive_params.get('social', 0.5) * 0.4, # Was 0.8
+                threshold=0.3 # Was 0.5 - Easier to trigger
             ),
             InstinctType.FOLLOW_SAME_SPECIES: Instinct(
                 type=InstinctType.FOLLOW_SAME_SPECIES,
@@ -323,7 +323,7 @@ class InstinctSystem:
             InstinctType.SEEK_SLEEP: Instinct(
                 type=InstinctType.SEEK_SLEEP,
                 base_strength=1.2,
-                threshold=0.4
+                threshold=0.65 # Was 0.4 - Only sleep when very tired
             ),
             InstinctType.SURFACE_BREATHE: Instinct(
                 type=InstinctType.SURFACE_BREATHE,

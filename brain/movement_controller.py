@@ -316,8 +316,8 @@ class MovementController:
                 return result
         
         # NORMAL MOVEMENT: Direction to target
-        direction = 1.0 if dx > 0 else -1.0
-        
+        # DEADZONE: If close horizontally, don't jitter back and forth
+        # This prevents "spinning" when closest point is vertically distant
         # Add avoidance vector from nearby hazards
         avoidance_vx = 0.0
         for hx, hy, radius in self.hazard_positions:
@@ -329,9 +329,15 @@ class MovementController:
                     avoidance_vx -= push_strength * self.walk_speed
                 else:
                     avoidance_vx += push_strength * self.walk_speed
-        
-        # Combine goal direction with avoidance, apply speed multiplier
-        goal_vx = direction * self.walk_speed * self.speed_multiplier
+
+        # DEADZONE: If close horizontally, don't jitter back and forth
+        if abs(dx) < 5.0:
+            direction = 0.0
+            goal_vx = 0.0
+        else:
+            direction = 1.0 if dx > 0 else -1.0
+            # Combine goal direction with avoidance, apply speed multiplier
+            goal_vx = direction * self.walk_speed * self.speed_multiplier
         target_vx = goal_vx + avoidance_vx
         
         # Clamp speed (with multiplier applied)

@@ -1986,36 +1986,41 @@ class SparseCorticalEngine:
         )
 
         # Feedforward weights (input → columns)
-        self.ff_weights = np.random.randn(num_columns, input_dim) * 0.1
+        self.ff_weights = (np.random.randn(num_columns, input_dim) * 0.1).astype(np.float32)
 
         # Lateral inhibition weights (column → column)
         self.lateral_weights = self._init_lateral_weights()
 
         # Feedback weights (higher areas → lower areas)
-        self.fb_weights = np.random.randn(num_columns, num_columns) * 0.05
+        self.fb_weights = (np.random.randn(num_columns, num_columns) * 0.05).astype(np.float32)
 
         # Predictive state (what we expect next)
-        self.prediction = np.zeros(num_columns)
+        self.prediction = np.zeros(num_columns, dtype=np.float32)
 
         # Current activation (sparse)
-        self.activation = np.zeros(num_columns)
+        self.activation = np.zeros(num_columns, dtype=np.float32)
 
         # Prediction error
-        self.prediction_error = np.zeros(num_columns)
+        self.prediction_error = np.zeros(num_columns, dtype=np.float32)
 
         # Column duty cycles (for boosting)
-        self.duty_cycles = np.ones(num_columns) * sparsity
+        self.duty_cycles = np.ones(num_columns, dtype=np.float32) * sparsity
         self.duty_cycle_alpha = 0.001
         # Usage and age tracking for structural plasticity
         self.usage_counts = np.zeros(num_columns, dtype=int)
         self.ages = np.zeros(num_columns, dtype=int)
 
         # Hierarchical cortical representation
-        self.cortical_states = [np.zeros(num_columns) for _ in range(num_cortical_areas)]
+        self.cortical_states = [np.zeros(num_columns, dtype=np.float32) for _ in range(num_cortical_areas)]
 
         # Refractory periods
-        self.last_spike_time = np.full(num_columns, -np.inf)
+        self.last_spike_time = np.full(num_columns, -np.inf, dtype=np.float32)
         self.refractory_period = 0.002  # 2ms
+        
+        # EMERGENT NOVELTY: How well existing columns represent the input
+        # Low value = input doesn't match any existing pattern = need new neurons
+        self.representation_quality = 1.0  # 0-1, how well input is explained
+        self.unexplained_inputs = 0  # Count of inputs with low representation
 
     def _init_lateral_weights(self) -> np.ndarray:
         """Initialize Mexican-hat lateral inhibition weights (vectorized)."""
@@ -2028,7 +2033,7 @@ class SparseCorticalEngine:
         close_mask = dist_matrix < 5
         far_mask = dist_matrix >= 5
         
-        weights = np.zeros((self.num_columns, self.num_columns))
+        weights = np.zeros((self.num_columns, self.num_columns), dtype=np.float32)
         weights[close_mask] = 0.1 * np.exp(-dist_matrix[close_mask] / 2)
         weights[far_mask] = -0.05 * np.exp(-(dist_matrix[far_mask] - 5) / 10)
         
@@ -2122,6 +2127,23 @@ class SparseCorticalEngine:
 
         # 6.5. Apply gain modulation from neuromodulators
         raw_activation *= gain_mod
+        
+        # Ensure minimal spontaneous activity to prevent "dead brain" state
+        # If all activations are zero/negative (due to random weights), the brain stalls.
+        # We inject noise to kickstart the winner-take-all dynamics.
+        if len(raw_activation) > 0 and np.max(raw_activation) <= 0.01:
+            raw_activation += np.random.rand(*raw_activation.shape) * 0.1
+
+        # 6.6. EMERGENT NOVELTY: Measure how well existing columns explain input
+        # Before k-winners, the max activation shows the best match
+        # Low max = input doesn't match any learned pattern = need neurogenesis
+        best_match = np.max(raw_activation) if len(raw_activation) > 0 else 0.0
+        # Normalize to 0-1 (typical range is 0-2 for good matches)
+        self.representation_quality = float(np.clip(best_match / 2.0, 0.0, 1.0))
+        
+        # Track unexplained inputs for neurogenesis
+        if self.representation_quality < 0.3:  # Poor match
+            self.unexplained_inputs += 1
 
         # 7. K-winners-take-all (with modulated sparsity)
         new_activation = self._k_winners_take_all(raw_activation, k_override=effective_k_winners)
@@ -2174,7 +2196,9 @@ class SparseCorticalEngine:
             'error_magnitude': error_magnitude,
             'cortical_states': self.cortical_states.copy(),
             'active_columns': np.sum(new_activation > 0),
-            'sparsity': np.mean(new_activation > 0)
+            'sparsity': np.mean(new_activation > 0),
+            'representation_quality': self.representation_quality,  # EMERGENT NOVELTY
+            'unexplained_inputs': self.unexplained_inputs
         }
 
     def _k_winners_take_all(self, activations: np.ndarray, k_override: Optional[int] = None) -> np.ndarray:
@@ -2355,17 +2379,36 @@ class DynamicRecurrentCore:
         self.last_output = np.zeros(output_dim)
 
     def _init_reservoir(self):
-        """Initialize reservoir weights with echo state property."""
-        # Random sparse reservoir weights
-        W = np.random.randn(self.reservoir_size, self.reservoir_size).astype(np.float32)
-
-        # Apply sparsity mask
-        mask = np.random.random((self.reservoir_size, self.reservoir_size)) < self.sparsity
-        W *= mask
-
-        # Scale to desired spectral radius
-        eigenvalues = np.linalg.eigvals(W)
-        current_radius = np.max(np.abs(eigenvalues))
+        """Initialize reservoir weights with echo state property.
+        
+        Uses power iteration instead of full eigenvalue decomposition
+        for O(n²) vs O(n³) complexity - critical for large reservoirs.
+        """
+        # Random sparse reservoir weights - use sparse initialization
+        # For very large reservoirs, this is much faster
+        n = self.reservoir_size
+        
+        # Only create non-zero elements (sparsity optimization)
+        num_connections = int(n * n * self.sparsity)
+        rows = np.random.randint(0, n, num_connections)
+        cols = np.random.randint(0, n, num_connections)
+        values = np.random.randn(num_connections).astype(np.float32)
+        
+        W = np.zeros((n, n), dtype=np.float32)
+        W[rows, cols] = values
+        
+        # Approximate spectral radius using power iteration (fast!)
+        # This is O(n² * iterations) vs O(n³) for full eigenvalue decomposition
+        v = np.random.randn(n).astype(np.float32)
+        v /= np.linalg.norm(v)
+        for _ in range(20):  # 20 iterations is usually enough
+            v_new = W @ v
+            norm = np.linalg.norm(v_new)
+            if norm < 1e-10:
+                break
+            v = v_new / norm
+        
+        current_radius = np.linalg.norm(W @ v)  # Approximate largest eigenvalue
         if current_radius > 0:
             W *= self.spectral_radius / current_radius
 
@@ -3066,7 +3109,7 @@ class ThreeSystemBrain:
         
         # Pain prediction: learns to anticipate pain from sensory patterns
         # Maps cortical activation patterns to predicted pain level
-        self.pain_predictor_weights = np.zeros(num_columns)  # Linear predictor
+        self.pain_predictor_weights = np.zeros(num_columns, dtype=np.float32)  # Linear predictor
         self.pain_prediction_history = []  # (cortical_pattern, actual_pain) pairs
         self.max_pain_history = 100
         self.pain_prediction_learning_rate = 0.1
@@ -3129,29 +3172,29 @@ class ThreeSystemBrain:
 
         # Expand feedforward weights (new rows)
         inp_dim = self.cortex.input_dim
-        extra_ff = np.random.randn(actually_added, inp_dim) * 0.05
+        extra_ff = np.random.randn(actually_added, inp_dim).astype(np.float32) * 0.05
         self.cortex.ff_weights = np.vstack([self.cortex.ff_weights, extra_ff])
 
         # Expand lateral weights (add rows and cols)
         old_lat = self.cortex.lateral_weights
         n_old = old_lat.shape[0]
         new_size = n_old + actually_added
-        new_lat = np.zeros((new_size, new_size))
+        new_lat = np.zeros((new_size, new_size), dtype=np.float32)
         new_lat[:n_old, :n_old] = old_lat
         # Fill new connections with small values
-        new_lat[n_old:, :] = np.random.randn(actually_added, new_size) * 0.01
-        new_lat[:, n_old:] = np.random.randn(new_size, actually_added) * 0.01
+        new_lat[n_old:, :] = np.random.randn(actually_added, new_size).astype(np.float32) * 0.01
+        new_lat[:, n_old:] = np.random.randn(new_size, actually_added).astype(np.float32) * 0.01
         self.cortex.lateral_weights = new_lat
 
         # Expand feedback weights (must be square: num_columns × num_columns)
         old_fb = self.cortex.fb_weights
         n_old_fb = old_fb.shape[0]
-        new_fb = np.zeros((new_total, new_total))
+        new_fb = np.zeros((new_total, new_total), dtype=np.float32)
         # Copy old weights into top-left
         new_fb[:n_old_fb, :n_old_fb] = old_fb[:n_old_fb, :n_old_fb] if old_fb.shape[1] >= n_old_fb else old_fb
         # Initialize new connections with small random values
-        new_fb[n_old_fb:, :] = np.random.randn(actually_added, new_total) * 0.01
-        new_fb[:, n_old_fb:] = np.random.randn(new_total, actually_added) * 0.01
+        new_fb[n_old_fb:, :] = np.random.randn(actually_added, new_total).astype(np.float32) * 0.01
+        new_fb[:, n_old_fb:] = np.random.randn(new_total, actually_added).astype(np.float32) * 0.01
         self.cortex.fb_weights = new_fb
 
         # Expand prediction / activation arrays
@@ -3177,6 +3220,11 @@ class ThreeSystemBrain:
         self.config.num_columns = new_total
         self.state.neurons_created += actually_added * self.cortex.cells_per_column
         self.learning.neurons_created += actually_added * self.cortex.cells_per_column
+        
+        # Resize tagging system to match new cortex shape
+        if hasattr(self, 'cortex_tagging'):
+            new_shape = self.cortex.ff_weights.shape
+            self.cortex_tagging.resize(new_shape)
 
     def _prune_columns(self, num_remove: int = 0, indices: list = None) -> None:
         """Prune cortical columns either by count (tail) or by specific indices.
@@ -3274,6 +3322,11 @@ class ThreeSystemBrain:
         pruned_neurons = remove * self.cortex.cells_per_column
         self.state.neurons_pruned += pruned_neurons
         self.learning.neurons_pruned += pruned_neurons
+        
+        # Resize tagging system to match new cortex shape
+        if hasattr(self, 'cortex_tagging'):
+            new_shape = self.cortex.ff_weights.shape
+            self.cortex_tagging.resize(new_shape)
 
     def _reservoir_driven_dream(self, steps: int = 5, imagine_if_empty: bool = True) -> Dict[str, Any]:
         """Run a short replay/imagination cycle and consolidate into cortex.
@@ -3345,6 +3398,22 @@ class ThreeSystemBrain:
                 )
         
         return events_by_target
+    
+    def sync_sleep_state(self, body_is_sleeping: bool):
+        """
+        Syncs brain sleep manager with body state.
+        Ensures that if the body wakes up (e.g. due to pain), the brain's 
+        consolidation process is interrupted.
+        """
+        if hasattr(self, 'sleep_manager'):
+            if self.sleep_manager.is_sleeping and not body_is_sleeping:
+                # Body woke up -> interrupt brain sleep
+                self.sleep_manager.interrupt_sleep()
+            elif not self.sleep_manager.is_sleeping and body_is_sleeping:
+                # Body fell asleep but brain thinks it's awake
+                # Force brain to enter sleep if it's tired enough, or just sync
+                if self.sleep_manager.should_sleep():
+                    self.sleep_manager.enter_sleep()
 
     def _encode_input(self, text: str) -> np.ndarray:
         """Encode text input to embedding vector."""
@@ -3611,13 +3680,48 @@ class ThreeSystemBrain:
             pass
 
         # =====================================================================
-        # STEP 5: Check for neurogenesis (compression-guided)
+        # STEP 5: EMERGENT NEUROGENESIS - Based on unexplained inputs
         # =====================================================================
-        novelty = 1.0 - self.cortex.get_prediction_confidence()
+        # Instead of arbitrary novelty thresholds, we track how many inputs
+        # the cortex failed to represent well. When enough unexplained inputs
+        # accumulate, we create new neurons to expand representation capacity.
+        #
+        # This is "memory is structure" - the brain grows when it encounters
+        # patterns it can't currently encode.
+        # =====================================================================
         
-        # Compression error also indicates novelty
-        combined_novelty = 0.7 * novelty + 0.3 * compression_error
-        should_create, num_new = self.learning.should_create_neurons(combined_novelty)
+        unexplained = getattr(self.cortex, 'unexplained_inputs', 0)
+        representation_quality = getattr(self.cortex, 'representation_quality', 1.0)
+        
+        # Novelty = inverse of how well we can represent input (used in return)
+        novelty = 1.0 - representation_quality
+        
+        # Get modulator levels for gating (stress blocks neurogenesis biologically)
+        dopamine = self.learning.neuromod.get_level(ModulatorType.DOPAMINE)
+        cortisol = self.learning.neuromod.simple_chemicals.get(ModulatorType.CORTISOL, 0.3)
+        
+        # Stress gate: High cortisol (pain/stress) blocks neurogenesis
+        # This is biologically accurate - chronic stress inhibits hippocampal neurogenesis
+        stress_blocks = cortisol > 0.7
+        
+        # Neurogenesis triggers when:
+        # 1. Accumulated enough unexplained inputs (brain encountered many novel patterns)
+        # 2. Current input is also poorly represented (we're seeing something new right now)
+        # 3. Not under acute stress (cortisol gate)
+        # 4. Sufficient dopamine (reward/motivation enables plasticity)
+        
+        should_create = False
+        num_new = 0
+        
+        if not stress_blocks and unexplained >= 5 and representation_quality < 0.5:
+            # Probability scales with dopamine (motivation) and unexplained count
+            prob = dopamine * (unexplained / 20.0)  # More unexplained = higher prob
+            if np.random.random() < prob:
+                # Create 1-3 new columns based on how poorly we're representing input
+                num_new = 1 + int(2 * (1.0 - representation_quality))
+                should_create = True
+                # Reset unexplained counter after growth
+                self.cortex.unexplained_inputs = 0
 
         # Perform safe structural changes if recommended
         if should_create and num_new > 0:
@@ -3625,6 +3729,7 @@ class ThreeSystemBrain:
                 self._add_columns(num_new)
             except Exception:
                 pass
+
 
         # Pruning decisions (conservative): use per-column usage and age
         try:
@@ -4150,6 +4255,13 @@ class ThreeSystemBrain:
             'neuromodulation': self.learning.get_neuromodulator_levels()
         }
 
+    def get_chemicals(self) -> Dict[str, float]:
+        """Get current neuromodulator/chemical levels.
+        
+        This is an alias for learning.get_neuromodulator_levels() for API compatibility.
+        """
+        return self.learning.get_neuromodulator_levels()
+
     def get_dashboard_data(self) -> Dict[str, Any]:
         """Get data for dashboard visualization - chatbot compatible."""
         neuromod = self.learning.get_neuromodulator_levels()
@@ -4284,25 +4396,33 @@ class ThreeSystemBrain:
         if not hasattr(self, 'cortex_tagging'):
             return
         
-        # Build active synapse mask from cortical activation
-        active_columns = self.last_cortical_output > 0.1
-        
-        # Create activation mask for ff_weights (which columns were activated)
-        active_mask = np.zeros(self.cortex.ff_weights.shape, dtype=bool)
-        for i, is_active in enumerate(active_columns):
-            if is_active and i < active_mask.shape[0]:
-                # Mark all input synapses to this column
-                active_mask[i, :] = True
-        
-        # Store for next tag
-        self.last_active_synapses = active_mask
-        
-        # Tag based on reward sign
-        strength = abs(reward)
-        if reward > 0.1:
-            self.cortex_tagging.tag_positive(active_mask, strength=strength, context=context)
-        elif reward < -0.1:
-            self.cortex_tagging.tag_negative(active_mask, strength=strength, context=context)
+        try:
+            # Ensure tagging system matches cortex shape
+            ff_shape = self.cortex.ff_weights.shape
+            if self.cortex_tagging.shape != ff_shape:
+                self.cortex_tagging.resize(ff_shape)
+            
+            # Build active synapse mask from cortical activation
+            active_columns = self.last_cortical_output > 0.1
+            
+            # Create activation mask for ff_weights (which columns were activated)
+            active_mask = np.zeros(ff_shape, dtype=bool)
+            for i, is_active in enumerate(active_columns):
+                if is_active and i < active_mask.shape[0]:
+                    # Mark all input synapses to this column
+                    active_mask[i, :] = True
+            
+            # Store for next tag
+            self.last_active_synapses = active_mask
+            
+            # Tag based on reward sign
+            strength = abs(reward)
+            if reward > 0.1:
+                self.cortex_tagging.tag_positive(active_mask, strength=strength, context=context)
+            elif reward < -0.1:
+                self.cortex_tagging.tag_negative(active_mask, strength=strength, context=context)
+        except Exception:
+            pass  # Fail silently to not break game loop
     
     def accumulate_fatigue(self, dt: float, cortisol_level: float = 0.0):
         """
@@ -4756,38 +4876,42 @@ def create_three_system_brain(
     Returns:
         Configured ThreeSystemBrain
     """
+    # Brain sizes balanced for performance vs capability
+    # Key: reservoir_size is the main performance bottleneck (O(n²) per step)
+    # Total neurons = num_columns × cells_per_column
+    # NOTE: input_dim must be >= 128 to match SensoryEncoder's channel layout
     configs = {
         "micro": BrainConfig(
-            input_dim=50,
+            input_dim=128,           # Must match sensory encoder minimum
             num_columns=50,
             cells_per_column=16,
-            reservoir_size=200,
-            output_dim=50,
+            reservoir_size=150,      # ~800 neurons, reservoir 150
+            output_dim=64,
             vocabulary_size=2000
         ),
         "small": BrainConfig(
-            input_dim=100,
+            input_dim=128,           # Must match sensory encoder minimum
             num_columns=100,
-            cells_per_column=32,
-            reservoir_size=500,
+            cells_per_column=20,
+            reservoir_size=300,      # ~2K neurons, reservoir 300
+            output_dim=64,
+            vocabulary_size=3000
+        ),
+        "medium": BrainConfig(
+            input_dim=128,           # Match sensory encoder
+            num_columns=200,
+            cells_per_column=25,
+            reservoir_size=500,      # ~5K neurons, reservoir 500
             output_dim=100,
             vocabulary_size=5000
         ),
-        "medium": BrainConfig(
-            input_dim=300,
-            num_columns=200,
-            cells_per_column=32,
-            reservoir_size=2000,
-            output_dim=300,
-            vocabulary_size=10000
-        ),
         "large": BrainConfig(
-            input_dim=500,
-            num_columns=500,
-            cells_per_column=32,
-            reservoir_size=5000,
-            output_dim=500,
-            vocabulary_size=20000
+            input_dim=150,
+            num_columns=400,
+            cells_per_column=25,
+            reservoir_size=800,      # ~10K neurons, reservoir 800
+            output_dim=150,
+            vocabulary_size=8000
         )
     }
 

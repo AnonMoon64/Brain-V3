@@ -1078,6 +1078,7 @@ class DevelopmentalSystem:
             'max_age': int(100 + 400 * p.get('longevity', 0.5)),
             'fertility': 0.3 + 0.7 * p.get('fertility', 0.5),
             'maturation_age': int(10 + 20 * (1 - p.get('maturation_rate', 0.5))),
+            'maturation_speed': p.get('maturation_rate', 0.5),  # For Homeostasis aging
         }
     
     def develop_drives(self) -> Dict[str, float]:

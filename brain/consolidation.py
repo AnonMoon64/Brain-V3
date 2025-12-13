@@ -89,6 +89,36 @@ class ChemicalTaggingSystem:
         self.experiences: deque = deque(maxlen=1000)
         self.current_time = 0.0
     
+    def resize(self, new_shape: Tuple[int, int]):
+        """
+        Resize all arrays to new shape, preserving existing data.
+        
+        Args:
+            new_shape: New (rows, cols) shape
+        """
+        if new_shape == self.shape:
+            return
+            
+        old_rows, old_cols = self.shape
+        new_rows, new_cols = new_shape
+        
+        # Helper to resize a 2D array
+        def _resize_array(arr, default_val=0):
+            new_arr = np.full(new_shape, default_val, dtype=arr.dtype)
+            copy_rows = min(old_rows, new_rows)
+            copy_cols = min(old_cols, new_cols)
+            new_arr[:copy_rows, :copy_cols] = arr[:copy_rows, :copy_cols]
+            return new_arr
+        
+        self.reinforcement_markers = _resize_array(self.reinforcement_markers, 0.0)
+        self.marker_types = _resize_array(self.marker_types, 0)
+        self.experience_counts = _resize_array(self.experience_counts, 0)
+        self.last_activations = _resize_array(self.last_activations, 0.0)
+        self.stability = _resize_array(self.stability, 0.5)
+        self.is_probationary = _resize_array(self.is_probationary, False)
+        
+        self.shape = new_shape
+    
     def tag_pathway(
         self,
         active_indices: np.ndarray,

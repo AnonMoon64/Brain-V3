@@ -44,13 +44,22 @@ def create_child_brain_config(c1: BrainConfig, c2: BrainConfig) -> BrainConfig:
     - Low lateral_inhibition = distributed, blurry representations
     - High neurogenesis_rate = more structural plasticity
     - High predictive_boost = more prediction-driven behavior
+    
+    Brain SIZE is randomly inherited from one parent (not blended) for
+    clearer size inheritance patterns.
     """
+    # Randomly pick one parent's brain size (not blended)
+    size_parent = c1 if np.random.random() < 0.5 else c2
+    
     return BrainConfig(
         # =====================================================================
-        # Structural Evolution (brain size)
+        # Structural Parameters (inherited from one parent randomly)
         # =====================================================================
-        num_columns=int(blend_values(c1.num_columns, c2.num_columns, 10, 50, 500)),
-        reservoir_size=int(blend_values(c1.reservoir_size, c2.reservoir_size, 50, 500, 5000)),
+        input_dim=size_parent.input_dim,  # CRITICAL: Must be 128 to match SensoryEncoder
+        num_columns=size_parent.num_columns,
+        cells_per_column=size_parent.cells_per_column,
+        reservoir_size=size_parent.reservoir_size,
+        output_dim=size_parent.output_dim,
         
         # =====================================================================
         # Reservoir Dynamics (memory/chaos balance)

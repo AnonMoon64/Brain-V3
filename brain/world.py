@@ -38,6 +38,8 @@ class TileType(Enum):
     FOOD_PLANT = 5      # Edible vegetation
     FOOD_MEAT = 6       # Edible meat/prey
     NEST = 7            # Breeding spot
+    STONE = 8           # Constructed wall
+
 
 
 class Weather(Enum):
@@ -65,6 +67,11 @@ class ToolType(Enum):
     LEAF = "leaf"       # Carrying water, cover
     SHELL = "shell"     # Scooping, protection
     BONE = "bone"       # Digging, weapon
+    # System 6: Constructed Tools
+    NEST = "nest"       # Resting spot (2 Sticks)
+    HAMMER = "hammer"   # Stick + Stone
+    SHARP_ROCK = "sharp_rock" # Stone + Stone
+    SPEAR = "spear"     # Stick + Sharp Rock
 
 
 @dataclass
@@ -118,6 +125,24 @@ class ToolObject:
             self.reach = 30.0
             self.weight = 0.5
             self.damage = 12.0
+        # System 6 Properties
+        elif self.tool_type == ToolType.NEST:
+            self.reach = 0.0
+            self.weight = 0.8
+            self.carry_capacity = 0.8
+            self.damage = 0.0
+        elif self.tool_type == ToolType.HAMMER:
+            self.reach = 20.0
+            self.weight = 0.6
+            self.damage = 25.0
+        elif self.tool_type == ToolType.SHARP_ROCK:
+            self.reach = 0.0
+            self.weight = 0.5
+            self.damage = 30.0
+        elif self.tool_type == ToolType.SPEAR:
+            self.reach = 90.0
+            self.weight = 0.4
+            self.damage = 20.0
     
     def use(self, dt: float = 0.1) -> bool:
         """Use the tool, reducing durability. Returns True if still usable."""
@@ -147,12 +172,37 @@ class FoodSource:
     spoilage_rate: float = 0.001    # How fast it decays
     remaining: float = 1.0          # 0-1, how much left
     
+    # Cultivation properties
+    is_planted: bool = False
+    growth_stage: float = 1.0       # 0.0=seed, 1.0=grown
+    max_nutrition: float = 0.5      # Target nutrition when grown
+    
     def decay(self, dt: float = 1.0):
         """Food decays over time."""
         # Meat spoils faster
         rate = self.spoilage_rate * 2.0 if self.type == FoodType.MEAT else self.spoilage_rate
         self.remaining -= rate * dt
         return self.remaining > 0
+
+    def update(self, dt: float) -> bool:
+        """Update food state (growth and decay)."""
+        # Growth logic
+        if self.is_planted and self.growth_stage < 1.0:
+            # Growth rate: 100 seconds to mature
+            growth_rate = 0.5 * dt  # Tuning: 0.01 = 100s. 0.1 = 10s.
+            self.growth_stage += growth_rate * 0.02 # Slower
+            
+            if self.growth_stage >= 1.0:
+                self.growth_stage = 1.0
+                
+            # Nutrition scales with growth
+            self.nutrition = self.max_nutrition * self.growth_stage
+            
+            # Plants growing don't decay
+            return True
+            
+        # Normal decay
+        return self.decay(dt)
 
 
 @dataclass 
@@ -279,12 +329,29 @@ class World:
     
     def _generate_terrain(self):
         """Generate procedural terrain - FLAT ground only."""
-        # Ground at 20% from top
-        # tiles_y = 22, so 20% = row 4-5 = tiles_y - 18
-        ground_level = self.tiles_y - 18
+        # Ground at 70% from top
+        ground_level = int(self.tiles_y * 0.7)
         
         # Fill ground - simple flat terrain
         self.tiles[ground_level:, :] = TileType.GROUND.value
+        
+        # Add random Surface Walls (Stone Pillars)
+        for _ in range(6):
+            rx = np.random.randint(5, self.tiles_x - 5)
+            h = np.random.randint(2, 5)
+            # Build pillar up from ground
+            for y in range(ground_level - h, ground_level):
+                if y >= 0:
+                    self.tiles[y, rx] = TileType.STONE.value
+                    
+        # Add random Caves (Holes in ground)
+        for _ in range(10):
+            rx = np.random.randint(0, self.tiles_x - 1)
+            ry = np.random.randint(ground_level + 1, self.tiles_y - 1)
+            self.tiles[ry, rx] = TileType.EMPTY.value
+            # Make it 2x2 roughly
+            self.tiles[ry, rx+1] = TileType.EMPTY.value
+            self.tiles[ry+1, rx] = TileType.EMPTY.value
         
         # NO PLATFORMS - removed to prevent invisible platform issues
         
@@ -346,6 +413,29 @@ class World:
         self.temperature[:, :self.tiles_x//3] -= 10
         # Right side warmer  
         self.temperature[:, 2*self.tiles_x//3:] += 10
+    
+    def plant_seed(self, x: float, y: float):
+        """Plant a seed at the location."""
+        # Align to ground nicely
+        ground_y = (self.tiles_y - 19) * self.tile_size # Approx ground level
+        
+        # Check if too close to other food
+        for food in self.food_sources:
+             if abs(food.x - x) < 20 and abs(food.y - ground_y) < 20:
+                 return False # Too close
+                 
+        seed = FoodSource(
+            x=x,
+            y=ground_y,
+            type=FoodType.PLANT,
+            is_planted=True,
+            growth_stage=0.0,
+            nutrition=0.05,
+            max_nutrition=0.8, # Cultivated plants are better?
+            remaining=1.0
+        )
+        self.food_sources.append(seed)
+        return True
     
     def _spawn_food(self):
         """Spawn a food item at a valid location across all world zones."""
@@ -470,6 +560,10 @@ class World:
             tool.held_by = None
             tool.x = x
             tool.y = y
+            # Enable physics so it falls
+            tool.throwing = True
+            tool.throw_vx = 0
+            tool.throw_vy = 0
     
     def throw_tool(self, tool: ToolObject, start_x: float, start_y: float, 
                    direction: float, power: float = 1.0, thrower_id: Optional[str] = None) -> Dict[str, Any]:
@@ -765,11 +859,16 @@ class World:
         if np.random.random() < self.tool_spawn_rate * dt:
             self._spawn_tool()
         
-        # Food decay
-        self.food_sources = [f for f in self.food_sources if f.decay(dt)]
+        # Food decay/growth
+        self.food_sources = [f for f in self.food_sources if f.update(dt)]
         
         # Tool durability decay for held tools
         self.tools = [t for t in self.tools if t.durability > 0]
+        
+        # System 6: Check interactions (crafting)
+        self._check_crafting_interactions()
+        
+        # Update Quadtree
         
         # Update Quadtree
         if _HAS_QUADTREE:
@@ -794,6 +893,74 @@ class World:
         base_temp += 10 * (self.light_level - 0.5)
         
         # Weather effect
+        # (Rest of update_temperature implementation...)
+    
+    def _check_crafting_interactions(self):
+        """
+        Check for tool-tool interactions for crafting.
+        If compatible tools are stacked (close proximity basic physics), merge them.
+        """
+        to_remove = []  # Changed from set to list since ToolObject is not hashable
+        to_add = []
+        
+        # Naive N^2 check (n is small, ~15)
+        # Only check tools on the ground (available)
+        available_tools = [t for t in self.tools if t.is_available() and t not in to_remove]
+        
+        for i, t1 in enumerate(available_tools):
+            if t1 in to_remove: continue
+            
+            for j, t2 in enumerate(available_tools):
+                if i >= j: continue
+                if t2 in to_remove: continue
+                
+                # Check distance
+                dist = np.sqrt((t1.x - t2.x)**2 + (t1.y - t2.y)**2)
+                if dist < 25.0:  # Stacked proximity
+                    # Check recipe
+                    result_type = self._get_crafting_result(t1.tool_type, t2.tool_type)
+                    
+                    if result_type:
+                        # CRAFT!
+                        to_remove.append(t1)
+                        to_remove.append(t2)
+                        
+                        # Create new item at center
+                        new_tool = ToolObject(
+                            x=(t1.x + t2.x) / 2,
+                            y=(t1.y + t2.y) / 2,
+                            tool_type=result_type
+                        )
+                        to_add.append(new_tool)
+                        print(f"[Crafting] Created {result_type.name} from {t1.tool_type.name} + {t2.tool_type.name}")
+                        break # One reaction per tool per tick
+        
+        # Apply changes
+        if to_remove:
+            self.tools = [t for t in self.tools if t not in to_remove]
+            self.tools.extend(to_add)
+            
+    def _get_crafting_result(self, t1: ToolType, t2: ToolType) -> Optional[ToolType]:
+        """Define crafting recipes."""
+        types = sorted([t1, t2], key=lambda t: t.value)
+        
+        # Stick + Stick -> Nest
+        if types == [ToolType.STICK, ToolType.STICK]:
+            return ToolType.NEST
+            
+        # Stick + Stone -> Hammer
+        if types == sorted([ToolType.STICK, ToolType.STONE], key=lambda t: t.value):
+            return ToolType.HAMMER
+            
+        # Stone + Stone -> Sharp Rock
+        if types == [ToolType.STONE, ToolType.STONE]:
+            return ToolType.SHARP_ROCK
+            
+        # Stick + Sharp Rock -> Spear
+        if types == sorted([ToolType.STICK, ToolType.SHARP_ROCK], key=lambda t: t.value):
+            return ToolType.SPEAR
+            
+        return None
         if self.weather == Weather.RAIN:
             base_temp -= 5
         elif self.weather == Weather.STORM:
@@ -849,7 +1016,8 @@ class World:
         tx = max(0, min(tx, self.tiles_x - 1))  # Clamp to valid range
         
         tile = self.tiles[ty, tx]
-        return tile == TileType.GROUND.value
+        return tile == TileType.GROUND.value or tile == TileType.STONE.value
+
     
     def is_hazard(self, x: float, y: float) -> Tuple[bool, float, str]:
         """Check if position is hazardous, return (is_hazard, damage, type)."""
@@ -1257,6 +1425,64 @@ class World:
         if type_name == "healing": return (255, 105, 180)   # Pink
         return (255, 87, 34) # Orange default
 
+    def dig(self, x: float, y: float) -> bool:
+        """
+        Dig at position (turn GROUND to EMPTY).
+        Returns True if successful.
+        """
+        if x < 0 or x >= self.width or y < 0 or y >= self.height:
+            return False
+            
+        ty = int(y // self.tile_size)
+        tx = int(x // self.tile_size)
+        
+        # Clamp
+        if ty < 0 or ty >= self.tiles_y or tx < 0 or tx >= self.tiles_x:
+            return False
+            
+        if self.tiles[ty, tx] == TileType.GROUND.value:
+            self.tiles[ty, tx] = TileType.EMPTY.value
+            return True
+        return False
+        
+    def build(self, x: float, y: float, type: TileType = TileType.STONE) -> bool:
+        """
+        Build at position (turn EMPTY to type).
+        Returns True if successful.
+        """
+        if x < 0 or x >= self.width or y < 0 or y >= self.height:
+            return False
+            
+        ty = int(y // self.tile_size)
+        tx = int(x // self.tile_size)
+        
+        # Clamp
+        if ty < 0 or ty >= self.tiles_y or tx < 0 or tx >= self.tiles_x:
+            return False
+            
+        # Only build in empty space
+        # Also ensure we aren't building inside a creature (collision check?)
+        # For now, just tile check
+        if self.tiles[ty, tx] == TileType.EMPTY.value:
+            self.tiles[ty, tx] = type.value
+            return True
+        return False
+        
+    def trigger_disaster(self, type: str = "earthquake"):
+        """Trigger a disaster event (System 3)."""
+        if type == "earthquake":
+            # Shake the world - break some walls, creatue rubble?
+            # For now, just break 10% of walls
+            for y in range(self.tiles_y):
+                for x in range(self.tiles_x):
+                    if self.tiles[y, x] == TileType.STONE.value:
+                        if np.random.random() < 0.1: # 10% chance to crumble
+                            self.tiles[y, x] = TileType.EMPTY.value
+            print("Earthquake triggered! Walls crumbled.")
+        elif type == "heat_wave":
+            self.weather = Weather.HEAT_WAVE
+
+
 
 # =============================================================================
 # EXPORTS
@@ -1270,3 +1496,4 @@ __all__ = [
     'Shelter',
     'World',
 ]
+

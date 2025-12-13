@@ -63,7 +63,7 @@ from brain import create_brain, ThreeSystemBrain
 
 # Create brain (all scales use ThreeSystemBrain)
 brain = create_brain(scale="small")
-# Scales: "micro" (800 neurons), "small" (3.2K), "medium" (6.4K), "large" (16K)
+# Scales: "micro" (800 neurons), "small" (2K), "medium" (5K), "large" (10K)
 
 # Or directly
 brain = ThreeSystemBrain(config=BrainConfig(...))

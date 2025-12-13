@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
     QFileDialog
 )
 from PyQt6.QtCore import Qt, QTimer, QRect, QPointF, QPoint
-from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QImage, QPixmap, QMouseEvent, QFont, QFontMetrics, QPainterPath
+from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QImage, QPixmap, QMouseEvent, QFont, QFontMetrics, QPainterPath, QTransform
 
 import sys
 import json
@@ -43,6 +43,10 @@ from brain.three_system_brain import ThreeSystemBrain, BrainConfig
 from brain.social_learning import SocialLearningSystem, CulturalKnowledge
 from brain.mental_map import MentalMap
 from brain.procedural_language import ProceduralLanguageSystem, CulturalLanguage
+from brain.procedural_language import ProceduralLanguageSystem, CulturalLanguage
+from brain.lineage import LineageSystem
+from brain.culture import CulturalMemory
+from brain.migration import save_creature_to_file
 
 # Try to import settings for visual config
 try:
@@ -108,8 +112,16 @@ class LivingCreature:
     current_speech: str = None
     current_gesture: str = None
     speech_timer: float = 0.0
+    
+    # State tracking for failure handling (prevent getting stuck)
+    consecutive_drink_fails: int = 0
+    consecutive_eat_fails: int = 0
+    forced_explore_timer: float = 0.0  # If >0, force WANDER/EXPLORE
     social_learning: SocialLearningSystem = None  # TIER 3: Cultural Evolution
     mental_map: MentalMap = None  # TIER 3: Environmental Intelligence
+    cultural_memory: CulturalMemory = None # TIER 3: Social Learning
+    decay_timer: float = 0.0  # TIER 4: Decomposition timer for dead bodies
+    last_damage_source: str = 'none'  # Track damage source for behavior state machine
     
     def __post_init__(self):
         if not self.name or self.name == "Creature":
@@ -140,6 +152,9 @@ class LivingCreature:
         # TIER 4: Every creature can develop language
         if self.procedural_language is None:
             self.procedural_language = ProceduralLanguageSystem(str(self.body.id), innovation_rate=0.15)
+        # TIER 3: Cultural Memory
+        if self.cultural_memory is None:
+            self.cultural_memory = CulturalMemory()
 
 
 
@@ -528,8 +543,8 @@ class WorldRenderer(QWidget):
                 
                 tile = self.world.tiles[ty, tx]
                 
-                # Skip empty and ground tiles if using background image
-                if has_bg and tile in (TileType.EMPTY.value, TileType.GROUND.value):
+                # Skip empty tiles if using background image (Background shows through)
+                if has_bg and tile == TileType.EMPTY.value:
                     continue
                 
                 x = int(offset_x + tx * tile_size)
@@ -590,6 +605,9 @@ class WorldRenderer(QWidget):
                 elif tile == TileType.WATER.value:
                     # Semi-transparent water so background shows through
                     color = QColor(int(50 * light + 14), int(130 * light + 34), int(180 * light + 43), 180)
+                elif tile == TileType.STONE.value:
+                    # Stone block
+                    color = QColor(int(100 * light), int(100 * light), int(110 * light))
                 elif tile == TileType.HAZARD.value:
                     # Hazards glow
                     color = QColor(255, int(80 + 40 * np.sin(self.world.time * 3)), 34, 200)
@@ -610,6 +628,11 @@ class WorldRenderer(QWidget):
             y = int(offset_y + food.y * scale)
             # Base size: 60-120 pixels depending on remaining (50% larger), scaled by view zoom
             base_size = int((60 + 60 * food.remaining) * scale)
+            
+            # Apply growth scaling (Cultivation)
+            growth = getattr(food, 'growth_stage', 1.0)
+            if growth < 1.0:
+                base_size = int(base_size * (0.3 + 0.7 * growth)) # Start small (30%)
             
             # Determine image key based on specific type
             # e.g. "food_sweet_berry", "food_plant"
@@ -654,8 +677,8 @@ class WorldRenderer(QWidget):
         
         # Draw tools (sticks, stones, etc.) - TIER 4
         for tool in self.world.tools:
-            # Only draw if not being held by a creature and not thrown
-            if tool.held_by is not None or getattr(tool, 'throwing', False):
+            # Only draw if not being held by a creature (thrown tools ARE drawn)
+            if tool.held_by is not None:
                 continue
             
             x = int(offset_x + tool.x * scale)
@@ -739,6 +762,70 @@ class WorldRenderer(QWidget):
                     cap_size = int(22 * scale)  # 15 * 1.5
                     painter.drawEllipse(int(x - tool_w/2 - cap_size/4), int(y - cap_size/2), cap_size, cap_size)
                     painter.drawEllipse(int(x + tool_w/2 - cap_size*0.75), int(y - cap_size/2), cap_size, cap_size)
+                
+                # System 6: New Tools Fallbacks
+                elif tool_type_val == "nest":
+                    # Nest: Concentric brown circles
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    painter.setPen(QPen(QColor(101, 67, 33), 3))
+                    painter.drawEllipse(int(x - tool_size/2), int(y - tool_size/2), tool_size, tool_size)
+                    painter.drawEllipse(int(x - tool_size/3), int(y - tool_size/3), int(tool_size*0.66), int(tool_size*0.66))
+                    
+                elif tool_type_val == "hammer":
+                    # Hammer: Stick handle + Stone head
+                    # Handle
+                    painter.setBrush(QBrush(QColor(139, 90, 43)))
+                    painter.setPen(QPen(QColor(80, 50, 20), 2))
+                    painter.drawRect(int(x - 4), int(y - tool_size/2), 8, int(tool_size))
+                    # Head
+                    painter.setBrush(QBrush(QColor(100, 100, 100)))
+                    painter.drawRect(int(x - 15), int(y - tool_size/2), 30, 20)
+                    
+                elif tool_type_val == "sharp_rock":
+                    # Sharp Rock: Triangle
+                    painter.setBrush(QBrush(QColor(140, 140, 140)))
+                    painter.setPen(QPen(QColor(60, 60, 60), 2))
+                    points = [
+                        QPoint(x, int(y - tool_size/2)),
+                        QPoint(int(x + tool_size/2), int(y + tool_size/2)),
+                        QPoint(int(x - tool_size/2), int(y + tool_size/2))
+                    ]
+                    painter.drawPolygon(points)
+                    
+                elif tool_type_val == "spear":
+                    # Spear: Long stick + triangle tip
+                    # Stick
+                    painter.setBrush(QBrush(QColor(139, 90, 43))) 
+                    painter.setPen(QPen(QColor(80, 50, 20), 2))
+                    painter.drawRect(int(x - 3), int(y - tool_size), 6, int(tool_size * 2))
+                    # Tip
+                    painter.setBrush(QBrush(QColor(180, 180, 180)))
+                    points = [
+                        QPoint(x, int(y - tool_size - 10)),
+                        QPoint(int(x + 6), int(y - tool_size)),
+                        QPoint(int(x - 6), int(y - tool_size))
+                    ]
+                    painter.drawPolygon(points)
+
+            # Draw Label (System 6 Requirement)
+            # Reusing images requires labels
+            if scale > 0.5:
+                # Draw label just above tool center with fixed small gap
+                painter.setPen(QColor(255, 255, 255))
+                painter.setFont(QFont("Arial", 8))
+                label = tool_type_val.replace('_', ' ').title()
+                fm = painter.fontMetrics()
+                tw = fm.horizontalAdvance(label)
+                th = fm.height()
+                
+                # Fixed small gap above tool center (5px gap)
+                label_y = int(y - th - 5)
+                
+                # Draw bg directly above tool center
+                painter.fillRect(int(x - tw/2 - 2), label_y, tw + 4, th, QColor(0, 0, 0, 150))
+                
+                # Draw text
+                painter.drawText(int(x - tw/2), label_y + th - 2, label)
         
         # Draw water sources (zone-specific water pools)
         if hasattr(self.world, 'water_sources'):
@@ -773,6 +860,57 @@ class WorldRenderer(QWidget):
         # Draw creatures
         for creature in self.creatures:
             self._draw_creature(painter, creature, scale, offset_x, offset_y)
+        
+        # Draw Mating Hearts
+        mating_pairs = getattr(self, 'mating_pairs', [])
+        if mating_pairs:
+            painter.setFont(QFont("Segoe UI Emoji", 24))
+            for pair in mating_pairs:
+                if not pair['p1'].body.is_alive() or not pair['p2'].body.is_alive():
+                    continue
+                
+                # Calculate center position
+                c1x = int(offset_x + pair['p1'].body.motor.x * scale)
+                c1y = int(offset_y + pair['p1'].body.motor.y * scale)
+                c2x = int(offset_x + pair['p2'].body.motor.x * scale)
+                c2y = int(offset_y + pair['p2'].body.motor.y * scale)
+                
+                mx = (c1x + c2x) // 2
+                my = min(c1y, c2y) - 30 # Floating above
+                
+                # Bobbing animation
+                offset = int(np.sin(self.world.time * 10) * 5)
+                
+                painter.drawText(mx - 15, my + offset, "💕")
+
+        # Draw ZZZ interaction (Sleep)
+        painter.setFont(QFont("Segoe UI", 12)) 
+        for creature in self.creatures:
+            if creature.body.homeostasis.is_sleeping and creature.body.is_alive():
+                cx = int(offset_x + creature.body.motor.x * scale)
+                cy = int(offset_y + creature.body.motor.y * scale)
+                
+                # Animate ZZZs
+                t = self.world.time
+                for i in range(3):
+                    # Staggered Zs
+                    z_offset = (t * 2 + i * 2) % 6  # 0 to 6 seconds cycle
+                    if z_offset < 2.0: # Visible for 2 seconds
+                        alpha = int(255 * (1 - z_offset/2.0))
+                        painter.setPen(QColor(150, 150, 220, alpha))
+                        
+                        dx = int(10 + i * 8 + np.sin(t * 3 + i) * 5)
+                        dy = int(-60 - z_offset * 15)  # Start higher (-60 instead of -20)
+                        
+                        painter.drawText(cx + dx, cy + dy, "z")
+                
+                # Dream Sparkles (Visualizing Replay)
+                if np.random.random() < 0.1:
+                    painter.setBrush(QBrush(QColor(255, 255, 100, 200))) # Yellow spark
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    sx = cx + int(np.random.normal(0, 15))
+                    sy = cy - 65 + int(np.random.normal(0, 10))  # Higher up (-65 instead of -25)
+                    painter.drawEllipse(sx, sy, 3, 3)
         
         # Draw weather overlay
         if self.world.weather.name == "RAIN":
@@ -848,14 +986,22 @@ class WorldRenderer(QWidget):
         # Try to draw with sprites from visual config
         if self._draw_creature_sprites(painter, creature, x, y, w, h, scale, SIZE_MULT):
             # Sprites were drawn, just add selection indicator and health bar
+            # Scaling box up to match sprite visual size (approx 2.5x physics body)
+            vis_w = int(w * 2.5)
+            vis_h = int(h * 2.5)
+            
             if creature == self.selected_creature:
                 painter.setPen(QPen(QColor(255, 255, 0), 3))
                 painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.drawRect(x - w//2 - 2, y - h//2 - 2, w + 4, h + 4)
+                # Align bottom of box with feet (y + h//2)
+                box_top = (y + h//2) - vis_h
+                painter.drawRect(x - vis_w//2, box_top, vis_w, vis_h)
             elif creature == self.selected_secondary:
                 painter.setPen(QPen(QColor(0, 255, 255), 3)) # Cyan for secondary
                 painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.drawRect(x - w//2 - 2, y - h//2 - 2, w + 4, h + 4)
+                # Align bottom of box with feet (y + h//2)
+                box_top = (y + h//2) - vis_h
+                painter.drawRect(x - vis_w//2, box_top, vis_w, vis_h)
         else:
             # Fall back to procedural drawing
             # Body
@@ -928,6 +1074,47 @@ class WorldRenderer(QWidget):
             painter.fillRect(x - bar_w//2, y - h//2 - 4, 
                            int(bar_w * body.homeostasis.energy * 2), 2, QColor(255, 200, 0))
         
+        # Fatigue indicator (Blue bar) - Only if tired
+        if body.homeostasis.fatigue > 0.3:
+            bar_w = int(w * 0.6)
+            # Draw empty background
+            painter.fillRect(x - bar_w//2, y - h//2 - 2, bar_w, 2, QColor(0, 0, 50))
+            painter.fillRect(x - bar_w//2, y - h//2 - 2, 
+                           int(bar_w * body.homeostasis.fatigue), 2, QColor(100, 100, 255))
+
+        # NSM: Consolidation Progress Bar (Purple)
+        # Only visible when sleeping
+        if body.homeostasis.is_sleeping:
+            progress = 0.0
+            # Try to get progress from brain's sleep manager
+            if hasattr(creature, 'embodied_brain') and creature.embodied_brain and \
+               hasattr(creature.embodied_brain.brain, 'sleep_manager'):
+                progress = creature.embodied_brain.brain.sleep_manager.consolidation_progress
+            
+            # Use max(0, min(1, ...)) to clamp
+            progress = max(0.0, min(1.0, progress))
+            
+            bar_w = int(w * 0.8)
+            # Purple background
+            painter.fillRect(x - bar_w//2, y - h//2 - 14, bar_w, 4, QColor(30, 0, 40))
+            # Bright purple fill
+            painter.fillRect(x - bar_w//2, y - h//2 - 14, 
+                           int(bar_w * progress), 4, QColor(180, 80, 255))
+            
+            # Text label
+            if scale > 0.8:
+                painter.setFont(QFont("Arial", 7))
+                painter.setPen(QColor(220, 200, 255))
+                painter.drawText(x - bar_w//2, y - h//2 - 16, "CONSOLIDATING")
+            painter.fillRect(x - bar_w//2, y - h//2 - 12, bar_w, 2, QColor(0, 0, 50, 100))
+            # Draw fill
+            painter.fillRect(x - bar_w//2, y - h//2 - 12, 
+                           int(bar_w * body.homeostasis.fatigue), 2, QColor(100, 100, 255))
+        
+        # Draw held tool attached to creature
+        if hasattr(creature, 'held_tool') and creature.held_tool is not None:
+            self._draw_held_tool(painter, creature, x, y, w, h, scale, body.motor.facing_right)
+        
         # Feature: Draw speech bubble
         if creature.current_speech:
              self._draw_speech_bubble(painter, x, y, creature.current_speech, scale)
@@ -968,6 +1155,89 @@ class WorldRenderer(QWidget):
         painter.setPen(QColor(0, 0, 0))
         painter.drawText(bx + padding, by + padding + fm.ascent() - 2, text)
     
+    def _draw_held_tool(self, painter: QPainter, creature: 'LivingCreature',
+                        x: int, y: int, w: int, h: int, scale: float, facing_right: bool):
+        """Draw a tool held by the creature."""
+        tool = creature.held_tool
+        if tool is None:
+            return
+        
+        # Get tool type first (needed for positioning)
+        tool_type_val = tool.tool_type.value if hasattr(tool.tool_type, 'value') else str(tool.tool_type)
+        
+        # Position tool at creature center (no offset - attach directly)
+        tool_x = x
+        tool_y = y  # Centered vertically (at creature center)
+        type_key = f"tool_{tool_type_val}"
+        
+        # Try to load images for this specific tool type
+        tool_images = self._get_world_object_images(type_key) if _HAS_SETTINGS else []
+        tool_config = self._get_world_object_config(type_key) if _HAS_SETTINGS else None
+        
+        # Size for held tools (match ground size)
+        base_size = int(60 * scale)
+        scale_factor = tool_config.scale if tool_config else 1.0
+        tool_size = int(base_size * scale_factor)
+        
+        if tool_images:
+            anim_speed = tool_config.animation_speed if tool_config else 0.2
+            frame_idx = (self.world_object_frame // max(1, int(anim_speed * 30))) % len(tool_images)
+            img = tool_images[frame_idx]
+            
+            # Sizing
+            if tool_type_val == "stick":
+                # Match ground tool dimensions
+                img_w = int(tool_size * 1.5)
+                img_h = int(tool_size * 0.4)
+            else:
+                img_w = img_h = tool_size
+            
+            scaled = img.scaled(int(img_w), int(img_h), 
+                               Qt.AspectRatioMode.KeepAspectRatio,
+                               Qt.TransformationMode.SmoothTransformation)
+            
+            # Flip image if facing left
+            if not facing_right:
+                scaled = scaled.transformed(QTransform().scale(-1, 1))
+            
+            painter.drawPixmap(int(tool_x - img_w // 2), int(tool_y - img_h // 2), scaled)
+        else:
+            # Fallback: draw simple shapes
+            if tool_type_val == "stick":
+                # Brown rectangle (stick)
+                stick_w = int(tool_size * 1.2)
+                stick_h = int(tool_size * 0.2)
+                painter.setBrush(QBrush(QColor(139, 90, 43)))  # Brown
+                painter.setPen(QPen(QColor(80, 50, 20), 1))
+                # Rotate slightly for held appearance
+                painter.save()
+                painter.translate(tool_x, tool_y)
+                angle = -30 if facing_right else 30
+                painter.rotate(angle)
+                painter.drawRect(-stick_w // 2, -stick_h // 2, stick_w, stick_h)
+                painter.restore()
+            elif tool_type_val == "stone":
+                # Gray ellipse (stone)
+                stone_size = int(tool_size * 0.6)
+                painter.setBrush(QBrush(QColor(120, 120, 120)))
+                painter.setPen(QPen(QColor(80, 80, 80), 1))
+                painter.drawEllipse(tool_x - stone_size // 2, tool_y - stone_size // 2, 
+                                   stone_size, stone_size)
+            elif tool_type_val == "leaf":
+                # Green ellipse (leaf)
+                leaf_w = int(tool_size * 0.8)
+                leaf_h = int(tool_size * 0.5)
+                painter.setBrush(QBrush(QColor(34, 139, 34)))  # Forest green
+                painter.setPen(QPen(QColor(0, 100, 0), 1))
+                painter.drawEllipse(tool_x - leaf_w // 2, tool_y - leaf_h // 2, 
+                                   leaf_w, leaf_h)
+            else:
+                # Generic tool indicator
+                painter.setBrush(QBrush(QColor(200, 200, 200)))
+                painter.setPen(QPen(QColor(100, 100, 100), 1))
+                painter.drawRect(tool_x - tool_size // 4, tool_y - tool_size // 4,
+                                tool_size // 2, tool_size // 2)
+
     def _draw_creature_sprites(self, painter: QPainter, creature: LivingCreature,
                                 x: int, y: int, w: int, h: int, 
                                 scale: float, size_mult: float) -> bool:
@@ -1123,7 +1393,13 @@ class WorldRenderer(QWidget):
         sprite_h = int(pixmap.height() * sprite_config.scale * size_mult * scale / 2)
         
         sprite_x = x + int(sprite_config.offset_x * scale) - sprite_w // 2
-        sprite_y = y + int(sprite_config.offset_y * scale) - sprite_h // 2
+        
+        # Align vertically: Bottom-align to feet unless sleeping
+        if is_sleeping:
+             sprite_y = y + int(sprite_config.offset_y * scale) - sprite_h // 2
+        else:
+             # Bottom align: feet at y + h//2
+             sprite_y = (y + h // 2) - sprite_h + int(sprite_config.offset_y * scale)
         
         # Rotate -90 degrees when sleeping (lying on back - cute!)
         if is_sleeping:
@@ -1213,9 +1489,9 @@ class WorldRenderer(QWidget):
             # Actually, let's assume PAINT_WALL -> EMPTY (VOID/WALL) and PAINT_GROUND -> GROUND.
             # If the world is a cave, EMPTY is wall.
             if event.button() == Qt.MouseButton.RightButton:
-                self._paint_tile(world_x, world_y, TileType.GROUND.value) # Erase wall -> Ground
+                self._paint_tile(world_x, world_y, TileType.EMPTY.value) # Erase -> Empty
             else:
-                 self._paint_tile(world_x, world_y, TileType.EMPTY.value) # Paint wall -> Empty
+                 self._paint_tile(world_x, world_y, TileType.STONE.value) # Paint -> Stone
                  
         elif self.current_tool == ToolType.PAINT_GROUND:
              if event.button() == Qt.MouseButton.RightButton:
@@ -1286,7 +1562,7 @@ class WorldRenderer(QWidget):
                  val = TileType.EMPTY.value if is_right else TileType.GROUND.value
                  self._paint_tile(world_x, world_y, val)
              elif self.current_tool == ToolType.PAINT_WALL: 
-                 val = TileType.GROUND.value if is_right else TileType.EMPTY.value
+                 val = TileType.EMPTY.value if is_right else TileType.STONE.value
                  self._paint_tile(world_x, world_y, val)
              
         self.update()
@@ -1737,6 +2013,12 @@ class GameTab(QWidget):
         # TIER 4: Cultural Language - emergent communication conventions
         self.cultural_language = CulturalLanguage()
         
+        # Mating animation tracking
+        self.mating_pairs = [] # List of {p1, p2, timer, start_time}
+
+        # SYSTEM 9: Lineage Tracking
+        self.lineage_system = LineageSystem()
+
         self.setup_ui()
         
         # Simulation timer (lower rate when multi-threaded since physics is separate)
@@ -1745,7 +2027,6 @@ class GameTab(QWidget):
         # 30 FPS for rendering, physics runs at 60Hz on separate thread
         self.sim_timer.start(33 if not use_threading else 33)
         
-        # Sound Manager
         # Sound Manager
         self.sound_manager = SoundManager()
         
@@ -1770,6 +2051,8 @@ class GameTab(QWidget):
         
         # World renderer
         self.world_renderer = WorldRenderer()
+        # Link mating pairs for rendering
+        self.world_renderer.mating_pairs = self.mating_pairs
         left_layout.addWidget(self.world_renderer, stretch=1)
         
         # Controls bar
@@ -1786,6 +2069,17 @@ class GameTab(QWidget):
         self.spawn_btn = QPushButton("🥚 Spawn Creature")
         self.spawn_btn.clicked.connect(self.spawn_creature_with_brain)  # Always spawn with full brain
         controls.addWidget(self.spawn_btn)
+        
+        # Gender selector for spawn
+        self.gender_combo = QComboBox()
+        self.gender_combo.addItems(["Random", "Male", "Female"])
+        controls.addWidget(self.gender_combo)
+        
+        # Brain size selector for spawn
+        self.brain_size_combo = QComboBox()
+        self.brain_size_combo.addItems(["Micro", "Small", "Medium", "Large"])
+        self.brain_size_combo.setToolTip("Brain size: Micro=800, Small=2K, Medium=5K, Large=10K neurons")
+        controls.addWidget(self.brain_size_combo)
 
         controls.addWidget(QLabel("Speed:"))
         self.speed_slider = QSlider(Qt.Orientation.Horizontal)
@@ -1851,25 +2145,33 @@ class GameTab(QWidget):
         
         self.creature_name = QLabel("None selected")
         self.creature_name.setWordWrap(True)
+        self.creature_gender = QLabel("Gender: -")
         self.creature_health = QLabel("Health: -")
         self.creature_energy = QLabel("Energy: -")
         self.creature_hunger = QLabel("Hunger: -")
         self.creature_thirst = QLabel("Thirst: -")
         self.creature_state = QLabel("State: -")
         self.creature_age = QLabel("Age: -")
+        self.creature_mating = QLabel("Mating: -")  # Mating stats
         
         creature_layout.addWidget(self.creature_name)
+        creature_layout.addWidget(self.creature_gender)
         creature_layout.addWidget(self.creature_health)
         creature_layout.addWidget(self.creature_energy)
         creature_layout.addWidget(self.creature_hunger)
         creature_layout.addWidget(self.creature_thirst)
         creature_layout.addWidget(self.creature_state)
         creature_layout.addWidget(self.creature_age)
+        creature_layout.addWidget(self.creature_mating)
         
         # Brain info
         self.creature_brain = QLabel("Brain: -")
         self.creature_brain.setWordWrap(True)
         creature_layout.addWidget(self.creature_brain)
+        
+        # Held tool info
+        self.creature_tool = QLabel("Holding: -")
+        creature_layout.addWidget(self.creature_tool)
         
         # Creature actions
         action_layout = QHBoxLayout()
@@ -1897,11 +2199,12 @@ class GameTab(QWidget):
         right_layout.addWidget(self.creature_group)
         
         # Creature list
-        list_group = QGroupBox("Creatures")
+        list_group = QGroupBox("Creatures (double-click to rename)")
         list_layout = QVBoxLayout(list_group)
         
         self.creature_list = QListWidget()
         self.creature_list.itemClicked.connect(self.select_creature_from_list)
+        self.creature_list.itemDoubleClicked.connect(self.rename_creature_from_list)
         list_layout.addWidget(self.creature_list)
         
         right_layout.addWidget(list_group)
@@ -2031,15 +2334,65 @@ class GameTab(QWidget):
         if self.threaded_manager:
             self.threaded_manager.set_speed(self.simulation_speed)
     
-    def spawn_creature(self):
-        """Spawn a single creature at random location."""
+    def spawn_creature_dialog(self):
+        """Show dialog to configure creature spawn options."""
+        from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QComboBox
+        from brain.creature import Gender
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Spawn Creature")
+        dialog.setMinimumWidth(300)
+        
+        layout = QFormLayout(dialog)
+        
+        # Gender selection
+        gender_combo = QComboBox()
+        gender_combo.addItems(["♂ Male", "♀ Female", "🎲 Random"])
+        layout.addRow("Gender:", gender_combo)
+        
+        # Brain size selection
+        brain_combo = QComboBox()
+        brain_combo.addItems(["None (Instinct Only)", "Micro (~800 neurons)", "Small (~3,200)", "Medium (~6,400)", "Large (~16,000)"])
+        brain_combo.setCurrentIndex(1)  # Default to Micro
+        layout.addRow("Brain Size:", brain_combo)
+        
+        # Buttons
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addRow(buttons)
+        
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            # Get selections
+            gender_idx = gender_combo.currentIndex()
+            if gender_idx == 0:
+                gender = Gender.MALE
+            elif gender_idx == 1:
+                gender = Gender.FEMALE
+            else:
+                gender = Gender.random()
+            
+            brain_idx = brain_combo.currentIndex()
+            brain_scales = [None, 'micro', 'small', 'medium', 'large']
+            brain_scale = brain_scales[brain_idx]
+            
+            # Spawn with these settings
+            self.spawn_creature_with_options(gender=gender, brain_scale=brain_scale)
+    
+    def spawn_creature_with_options(self, gender=None, brain_scale='micro'):
+        """Spawn a creature with specific gender and brain size."""
         if self.world is None:
             self.create_new_world()
         
-        # Find a safe spawn location (on ground, not water/hazard)
+        from brain.creature import Gender
+        
+        # Find a safe spawn location
         x, y = self._find_safe_spawn_location()
         
-        # Create random phenotype
+        # Create random phenotype with specified gender
+        if gender is None:
+            gender = Gender.random()
+        
         phenotype = Phenotype(
             size=0.7 + np.random.random() * 0.6,
             hue=np.random.random(),
@@ -2049,6 +2402,87 @@ class GameTab(QWidget):
             max_speed=2.0 + np.random.random() * 3,
             jump_power=6 + np.random.random() * 6,
             metabolic_rate=0.8 + np.random.random() * 0.4,
+            gender=gender,
+        )
+        
+        body = CreatureBody(phenotype=phenotype, x=x, y=y)
+        
+        # === HORMONAL DIMORPHISM (1) - Gender-specific hormone baselines ===
+        if gender == Gender.MALE:
+            body.homeostasis.testosterone_base = 0.7 + np.random.random() * 0.2
+            body.homeostasis.estrogen_base = 0.2 + np.random.random() * 0.2
+        else:
+            body.homeostasis.testosterone_base = 0.2 + np.random.random() * 0.2
+            body.homeostasis.estrogen_base = 0.7 + np.random.random() * 0.2
+        
+        # Random drive params with gender dimorphism (10)
+        drive_params = {
+            'hunger': 0.3 + np.random.random() * 0.4,
+            'fear': 0.3 + np.random.random() * 0.4,
+            'curiosity': 0.3 + np.random.random() * 0.4,
+            'social': 0.3 + np.random.random() * 0.4,
+        }
+        
+        # Gender affects baseline drives
+        if gender == Gender.MALE:
+            drive_params['fear'] = max(0.1, drive_params['fear'] - 0.1)
+            drive_params['curiosity'] = min(0.9, drive_params['curiosity'] + 0.1)
+        else:
+            drive_params['social'] = min(0.9, drive_params['social'] + 0.1)
+        
+        instincts = InstinctSystem(drive_params)
+        reward_system = RewardSystem()
+        
+        # Create brain if requested
+        brain = None
+        embodied = None
+        if brain_scale:
+            try:
+                embodied = EmbodiedBrain(brain=None, body=body, brain_scale=brain_scale)
+                brain = embodied.brain
+            except Exception as e:
+                print(f"Error creating brain: {e}")
+        
+        creature = LivingCreature(
+            body=body,
+            brain=brain,
+            instincts=instincts,
+            reward_system=reward_system,
+            generation=0,
+            use_neural_control=brain is not None,
+            name=f"{gender.symbol} Creature_{len(self.creatures)+1}"
+        )
+        
+        if embodied:
+            creature.embodied_brain = embodied
+        
+        self.creatures.append(creature)
+        self.lineage_system.register_birth(creature)
+        self.world_renderer.set_creatures(self.creatures)
+        self.update_creature_list()
+    
+    def spawn_creature(self):
+        """Spawn a single creature at random location."""
+        if self.world is None:
+            self.create_new_world()
+        
+        # Find a safe spawn location (on ground, not water/hazard)
+        x, y = self._find_safe_spawn_location()
+        
+        # Import Gender for assignment
+        from brain.creature import Gender
+        
+        # Create random phenotype with random gender
+        phenotype = Phenotype(
+            size=0.7 + np.random.random() * 0.6,
+            hue=np.random.random(),
+            saturation=0.5 + np.random.random() * 0.5,
+            pattern_type=np.random.choice(["solid", "stripes", "spots", "gradient"]),
+            pattern_density=np.random.random(),
+            max_speed=2.0 + np.random.random() * 3,
+            jump_power=6 + np.random.random() * 6,
+            metabolic_rate=0.8 + np.random.random() * 0.4,
+            gender=Gender.random(),  # Random gender assignment
         )
         
         body = CreatureBody(phenotype=phenotype, x=x, y=y)
@@ -2073,6 +2507,7 @@ class GameTab(QWidget):
         )
         
         self.creatures.append(creature)
+        self.lineage_system.register_birth(creature)
         self.world_renderer.set_creatures(self.creatures)
         self.update_creature_list()
     
@@ -2109,7 +2544,15 @@ class GameTab(QWidget):
             self.spawn_creature()
             
     def _trigger_speech(self, creature: LivingCreature, context_text: str, mood: str = "neutral"):
-        """Trigger speech generation for a creature using procedural language."""
+        """
+        Trigger speech generation for a creature using procedural language.
+        
+        ENHANCED: First checks if the creature's brain has learned word associations
+        from observing others. If the creature heard "apa" while watching someone drink,
+        and now THEY are drinking, the "apa" pattern may activate and they'll say it.
+        
+        This is emergent language - words spread through observation + neural association.
+        """
         if not creature.procedural_language:
             return
         
@@ -2132,13 +2575,61 @@ class GameTab(QWidget):
             context['need'] = 'social'
             context['target'] = 'mate'
         
-        # Generate utterance using procedural system
-        word, gesture = creature.procedural_language.generate_utterance(context)
+        # === NEURAL RETRIEVAL: Check if brain has learned word for this action ===
+        # Present the action pattern to brain and see if it activates a word pattern
+        retrieved_word = None
+        if creature.embodied_brain is not None:
+            try:
+                brain = creature.embodied_brain.brain
+                behavior = creature.behavior_state.state.name if creature.behavior_state else 'unknown'
+                
+                # Encode current action as pattern
+                action_pattern = self._encode_action_pattern(context['need'], behavior)
+                
+                # Present to cortex and get response
+                if hasattr(brain, 'cortex'):
+                    result = brain.cortex.process(
+                        input_data=action_pattern,
+                        current_time=brain.current_time,
+                        learning_enabled=False  # Just retrieving, not learning
+                    )
+                    
+                    # Check if any learned words have similar activation pattern
+                    # by comparing response to known word patterns in lexicon
+                    cortex_response = result.get('activation', np.zeros(100))
+                    
+                    best_match_word = None
+                    best_similarity = 0.3  # Threshold for recall
+                    
+                    for word in creature.procedural_language.lexicon:
+                        word_pattern = self._encode_word_pattern(word)
+                        # Simple similarity: dot product of patterns
+                        similarity = np.dot(cortex_response[:len(word_pattern)], word_pattern)
+                        if similarity > best_similarity:
+                            best_similarity = similarity
+                            best_match_word = word
+                    
+                    if best_match_word:
+                        retrieved_word = best_match_word
+                        
+            except Exception:
+                pass  # Fall back to procedural generation
+        
+        # Use retrieved word if found, otherwise generate new utterance
+        if retrieved_word:
+            word = retrieved_word
+            # Get associated gesture from lexicon
+            symbol = creature.procedural_language.lexicon.get(word)
+            gesture = symbol.gesture if symbol else None
+        else:
+            # Generate utterance using procedural system (may innovate new word)
+            word, gesture = creature.procedural_language.generate_utterance(context)
         
         # Set speech bubble and gesture
         creature.current_speech = word
         creature.current_gesture = gesture
         creature.speech_timer = 3.0  # Show for 3 seconds
+    
     
     def spawn_creature_with_brain(self):
         """Spawn a creature with a neural brain (EmbodiedBrain)."""
@@ -2148,6 +2639,19 @@ class GameTab(QWidget):
         # Find safe spawn location
         x, y = self._find_safe_spawn_location()
         
+        # Determine gender from dropdown
+        from brain.creature import Gender
+        gender_text = self.gender_combo.currentText()
+        if gender_text == "Male":
+            gender = Gender.MALE
+        elif gender_text == "Female":
+            gender = Gender.FEMALE
+        else:
+            gender = Gender.random()
+        
+        # Determine brain size from dropdown
+        brain_size = self.brain_size_combo.currentText().lower()  # 'micro', 'small', 'medium', 'large'
+        
         # Create random phenotype
         phenotype = Phenotype(
             size=0.7 + np.random.random() * 0.6,
@@ -2155,6 +2659,7 @@ class GameTab(QWidget):
             saturation=0.5 + np.random.random() * 0.5,
             pattern_type=np.random.choice(["solid", "stripes", "spots", "gradient"]),
             pattern_density=np.random.random(),
+            gender=gender,
             max_speed=2.0 + np.random.random() * 3,
             jump_power=6 + np.random.random() * 6,
             metabolic_rate=0.8 + np.random.random() * 0.4,
@@ -2162,15 +2667,23 @@ class GameTab(QWidget):
         
         body = CreatureBody(phenotype=phenotype, x=x, y=y)
         
+        # === HORMONAL DIMORPHISM (1) - Gender-specific hormone baselines ===
+        if gender == Gender.MALE:
+            body.homeostasis.testosterone_base = 0.7 + np.random.random() * 0.2
+            body.homeostasis.estrogen_base = 0.2 + np.random.random() * 0.2
+        else:
+            body.homeostasis.testosterone_base = 0.2 + np.random.random() * 0.2
+            body.homeostasis.estrogen_base = 0.7 + np.random.random() * 0.2
+
         # Create EmbodiedBrain (brain + body wiring)
         try:
-            embodied = EmbodiedBrain(brain=None, body=body, brain_scale='micro')
+            embodied = EmbodiedBrain(brain=None, body=body, brain_scale=brain_size)
         except Exception as e:
             print(f"Failed to create brain: {e}")
             # Fall back to instinct-only
             self.spawn_creature()
             return
-        
+
         # Still create instincts as backup/blending
         drive_params = {
             'hunger': 0.3 + np.random.random() * 0.4,
@@ -2179,6 +2692,13 @@ class GameTab(QWidget):
             'social': 0.3 + np.random.random() * 0.4,
         }
         
+        # Gender affects baseline drives (10)
+        if gender == Gender.MALE:
+            drive_params['fear'] = max(0.1, drive_params['fear'] - 0.1)
+            drive_params['curiosity'] = min(0.9, drive_params['curiosity'] + 0.1)
+        else:
+            drive_params['social'] = min(0.9, drive_params['social'] + 0.1)
+            
         instincts = InstinctSystem(drive_params)
         reward_system = RewardSystem()
         
@@ -2193,6 +2713,7 @@ class GameTab(QWidget):
         )
         
         self.creatures.append(creature)
+        self.lineage_system.register_birth(creature)
         self.world_renderer.set_creatures(self.creatures)
         self.update_creature_list()
         print(f"Spawned {creature.name} with state machine control")
@@ -2213,6 +2734,9 @@ class GameTab(QWidget):
             
             # Update world time
             self.world.update(0.033 * self.simulation_speed)
+            
+            # Process mating pairs (timer updates, baby spawning)
+            self._process_mating_pairs(0.033 * self.simulation_speed)
             
             # Redraw
             self.world_renderer.update()
@@ -2241,6 +2765,9 @@ class GameTab(QWidget):
         # Run sub-steps
         for _ in range(sub_steps):
             self._run_simulation_substep(physics_dt)
+        
+        # Process mating pairs (timer updates, baby spawning)
+        self._process_mating_pairs(total_dt)
         
         # Update world time (only once per frame)
         self.world.update(total_dt)
@@ -2308,6 +2835,48 @@ class GameTab(QWidget):
                 learning_enabled=True
             )
             
+            # === NSM: Set age and metabolic plasticity ===
+            brain = creature.embodied_brain.brain
+            if hasattr(brain, 'set_creature_age'):
+                # Normalize age (assuming max lifespan ~300 seconds for full maturity)
+                normalized_age = min(1.0, creature.body.lifetime / 300.0)
+                brain.set_creature_age(normalized_age)
+            
+            if hasattr(brain, 'set_metabolic_plasticity'):
+                brain.set_metabolic_plasticity(creature.body.phenotype.metabolic_rate)
+            
+            # === NSM: Pain-Based Reward Tagging ===
+            # Tag synapses based on current experience for sleep consolidation
+            if hasattr(brain, 'tag_reward'):
+                pain = sensory_data.get('pain', 0)
+                damage_source = sensory_data.get('damage_source', 'general')
+                
+                # Pain → negative tag (weaken these pathways during sleep)
+                if pain > 0.1:
+                    brain.tag_reward(-pain, context=f"pain:{damage_source}")
+                
+                # Food reward → positive tag (strengthen these pathways)
+                if getattr(creature.body, 'food_eaten', 0) > 0:
+                    brain.tag_reward(0.5, context="eating")
+                
+                # Water reward → positive tag
+                if getattr(creature.body, 'water_consumed', 0) > 0:
+                    brain.tag_reward(0.3, context="drinking")
+                
+                # Accumulate fatigue for sleep system
+                if hasattr(brain, 'accumulate_fatigue'):
+                    cortisol = neuro_changes.get('cortisol', 0)
+                    brain.accumulate_fatigue(dt, cortisol)
+            
+            # === NSM: Sleep Sync ===
+            if hasattr(brain, 'sync_sleep_state'):
+                 brain.sync_sleep_state(creature.body.homeostasis.is_sleeping)
+            
+            # Legacy reward signal
+            if getattr(creature.body, 'food_eaten', 0) > 0:
+                if hasattr(brain, 'receive_reward'):
+                    brain.receive_reward(0.5)
+            
             # Return result for inspection
             return {
                 'sensory_input': brain_input,
@@ -2333,8 +2902,16 @@ class GameTab(QWidget):
                        for h in self.world.hazards]
         
         # Update each creature
-        for creature in self.creatures:
+        for creature in self.creatures: 
             if not creature.body.is_alive():
+                # TIER 4: Decomposition / Cleanup
+                # We only increment logic here. Removal happens in update_info (Main Thread)
+                # to avoid "list modified during iteration" errors in the renderer.
+                if not getattr(creature, 'death_registered', False):
+                    self.lineage_system.register_death(creature)
+                    creature.death_registered = True
+                
+                creature.decay_timer += dt
                 continue
             
             # Feature: Update speech timer
@@ -2342,6 +2919,18 @@ class GameTab(QWidget):
                 creature.speech_timer -= dt
                 if creature.speech_timer <= 0:
                     creature.current_speech = None
+            
+            # Feature: Forced Explore (anti-stuck mechanism)
+            if creature.forced_explore_timer > 0:
+                creature.forced_explore_timer -= dt
+                creature.movement.set_goal_wander()
+                creature.behavior_state.state = BehaviorState.WANDER
+                
+                # Still update physics and metabolism
+                creature.movement.update(dt, [], [])
+                creature.body.update(dt, self.world, creature.movement.get_motor_output())
+                self._update_metabolism(dt)
+                continue  # SKIP other AI logic while forced exploring
             
             # Get creature state
             cx = creature.body.motor.x
@@ -2370,10 +2959,18 @@ class GameTab(QWidget):
                     other_y = other.body.motor.y
                     dist = np.sqrt((other_x - cx)**2 + (other_y - cy)**2)
                     if dist < creature.social_learning.observation_range:
+                        # Mutation: Check collision/mating
+                        if dist < 30:
+                            my_rep = drives.get('reproduction', 0)
+                            other_rep = other.body.homeostasis.get_drive_levels().get('reproduction', 0)
+                            if my_rep > 0 and other_rep > 0:
+                                self._start_mating(creature, other)
+
                         visible_creatures.append({
-                            'id': other.body.id,
-                            'x': other_x,
-                            'y': other_y,
+                            'creature': other,
+                            'dist': dist,
+                            'rel_x': other_x - cx,
+                            'rel_y': other_y - cy,
                             'behavior': other.behavior_state.state.name if other.behavior_state else 'unknown',
                             'is_eating': hasattr(other.body, 'food_eaten') and other.body.food_eaten > 0,
                             'is_drinking': hasattr(other.body, 'water_consumed') and other.body.water_consumed > 0,
@@ -2423,6 +3020,36 @@ class GameTab(QWidget):
                 remembered_danger = creature.mental_map.get_nearest_danger(max_dist=150)
                 if remembered_danger:
                     nearest_hazard = (remembered_danger[0], remembered_danger[1])
+            
+            # === MATING CHECK: Skip all behavior if actively mating ===
+            # Mating pairs are frozen in place - don't override their state
+            is_mating = False
+            for pair in self.mating_pairs:
+                if pair['p1'] == creature or pair['p2'] == creature:
+                    is_mating = True
+                    creature.movement.set_goal_stay()
+                    creature.body.motor.vx = 0
+                    break
+            
+            if is_mating:
+                # Still update physics but skip all behavior decisions
+                movement_result = creature.movement.update(
+                    dt, cx, cy, on_ground, in_water, self.world
+                )
+                creature.body.motor.vx = 0  # Force stop
+                
+                # Apply physics (gravity, collisions) but no movement
+                new_x, new_y, new_vx, new_vy, new_on_ground = self.world.apply_physics(
+                    creature.body.motor.x, creature.body.motor.y,
+                    0, creature.body.motor.vy,  # Zero horizontal velocity
+                    dt
+                )
+                creature.body.motor.x = new_x
+                creature.body.motor.y = new_y
+                creature.body.motor.vx = 0
+                creature.body.motor.vy = new_vy
+                creature.body.motor.on_ground = new_on_ground
+                continue  # Skip all other behavior logic
             
             # === TIER 2: Predictive Pain Avoidance ===
             # Check if brain predicts pain BEFORE it happens
@@ -2486,23 +3113,20 @@ class GameTab(QWidget):
                     if creature.embodied_brain is not None and hasattr(creature.embodied_brain.brain, 'enter_sleep'):
                         creature.embodied_brain.brain.enter_sleep()
                 
-                # While sleeping: slower metabolism = less hunger/thirst increase
-                # Energy recovers, but hunger/thirst frozen (body conserves)
-                creature.body.homeostasis.energy = min(
-                    1.0, creature.body.homeostasis.energy + 0.015 * dt
-                )
-                # Reduce fatigue faster while sleeping
-                creature.body.homeostasis.fatigue = max(
-                    0, creature.body.homeostasis.fatigue - 0.01 * dt
-                )
+                # Energy recovery is now handled in homeostasis._sleep_update()
+                # No need to duplicate it here
                 
                 # EMERGENCY: Wake up if critically thirsty/hungry (survival override)
                 critical_thirst = creature.body.homeostasis.thirst > 0.85
                 critical_hunger = creature.body.homeostasis.hunger > 0.85
+                emergency_wake = critical_thirst or critical_hunger
                 
                 # Wake up when: (normal rest) OR (critical survival need)
-                normal_wake = creature.body.homeostasis.energy > 0.6 and creature.body.homeostasis.fatigue < 0.3
-                emergency_wake = critical_thirst or critical_hunger
+                normal_wake = creature.body.homeostasis.energy > 0.6 and creature.body.homeostasis.fatigue < 0.2
+                
+                # Sleep deprivation penalty if forced awake (emergency)
+                if emergency_wake and creature.body.homeostasis.fatigue > 0.5:
+                     creature.body.homeostasis.stress += 0.2 # Waking up tired is stressful
                 
                 if normal_wake or emergency_wake:
                     creature.body.homeostasis.wake_up()
@@ -2522,6 +3146,10 @@ class GameTab(QWidget):
             # Use 'reproduction' drive from homeostasis which already checks fertility & energy
             # TUNING: Lowered threshold from 0.4 to 0.3 for easier breeding
             elif drives.get('reproduction', 0) > 0.3 and creature.body.lifetime > 20: 
+                # Check for opposite gender mates
+                from brain.creature import Gender
+                my_gender = creature.body.phenotype.gender
+                
                 # Scan for mate
                 best_mate = None
                 min_dist = 200 # Vision range for mating
@@ -2529,9 +3157,14 @@ class GameTab(QWidget):
                 for other in self.creatures:
                     if other == creature or not other.body.is_alive(): 
                         continue
+                    
+                    # Gender check - must be opposite
+                    other_gender = other.body.phenotype.gender
+                    if my_gender and other_gender and my_gender == other_gender:
+                        continue  # Same gender, skip
                         
                     # 1. Similarity check (species)
-                    if abs(other.body.phenotype.hue - creature.body.phenotype.hue) > 0.2: # Relaxed from 0.15
+                    if abs(other.body.phenotype.hue - creature.body.phenotype.hue) > 0.2:
                         continue
                         
                     # 2. Distance check
@@ -2544,16 +3177,46 @@ class GameTab(QWidget):
                     best_mate = other
                 
                 if best_mate:
-                    if min_dist < 50: # Increased range from 40
-                        # Close enough!
-                        self._breed_pair(creature, best_mate)
+                    if min_dist < 50:
+                        # Close enough to mate!
+                        creature.behavior_state.state = BehaviorState.MATING
+                        self._start_mating(creature, best_mate)
                         creature.movement.set_goal_stay()
-                        creature.movement.speed_multiplier = 1.0  # Normal speed
-                        creature.behavior_state.state = BehaviorState.SOCIALIZING
+                        creature.movement.speed_multiplier = 1.0
+                    elif min_dist < 100:
+                        # In courting range - do MATE_CALLING display
+                        creature.behavior_state.state = BehaviorState.MATE_CALLING
+                        creature.movement.set_goal_stay()  # Stop to display
+                        
+                        # Courtship behaviors (brain-driven, but we trigger the context)
+                        # 1. Vocalizations - trigger speech about attraction
+                        if np.random.random() < 0.1:  # 10% chance per tick
+                            self._trigger_speech(creature, "love mate attraction", mood="excited")
+                        
+                        # 2. Visual display - small "dance" movements
+                        if np.random.random() < 0.05:
+                            creature.movement.speed_multiplier = 0.3
+                            # Quick left-right shimmy
+                            creature.body.motor.vx = 30 * (1 if np.random.random() > 0.5 else -1)
+                        
+                        # 3. Tool display - if holding a tool, show it off
+                        if hasattr(creature, 'held_tool') and creature.held_tool:
+                            # Having a tool makes you more attractive (brain can learn this)
+                            if creature.embodied_brain is not None:
+                                try:
+                                    creature.embodied_brain.brain.learning.receive_reward(0.02)
+                                except Exception:
+                                    pass
                     else:
-                        # Pursue mate
+                        # Too far - approach mate
                         creature.movement.set_goal_go_to(best_mate.body.motor.x, best_mate.body.motor.y)
-                        creature.movement.speed_multiplier = 1.0  # Normal speed
+                        creature.movement.speed_multiplier = 1.0
+                else:
+                    # No mate found - do MATE_CALLING to attract one
+                    if np.random.random() < 0.3:  # Sometimes call out
+                        creature.behavior_state.state = BehaviorState.MATE_CALLING
+                        if np.random.random() < 0.1:
+                            self._trigger_speech(creature, "seeking mate lonely", mood="longing")
             
             # 4. SEEK WATER if thirsty (Priority over food)
             elif thirst > 0.3:
@@ -2573,10 +3236,27 @@ class GameTab(QWidget):
                         # Close enough - STOP and drink
                         creature.movement.set_goal_stay()
                         creature.behavior_state.state = BehaviorState.SEEKING_WATER
-                        self._try_drink_water(creature, nearest_water[0], nearest_water[1])
+                        
+                        # Try to drink
+                        success = self._try_drink_water(creature, nearest_water[0], nearest_water[1])
+                        
+                        if success:
+                            creature.consecutive_drink_fails = 0
+                        else:
+                            creature.consecutive_drink_fails += 1
+                            if creature.consecutive_drink_fails > 3:
+                                # Stuck! Force explore
+                                creature.forced_explore_timer = 2.0 + np.random.random() * 2.0
+                                creature.consecutive_drink_fails = 0
+                                # Push away slightly
+                                creature.body.motor.vx = (np.random.random() - 0.5) * 50
+                                creature.body.motor.vy = (np.random.random() - 0.5) * 50
                     else:
                         # Still approaching - move toward water (faster when desperate)
-                        creature.movement.set_goal_go_to(nearest_water[0], nearest_water[1])
+                        # Add slight randomness to target to prevent stacking
+                        target_x = nearest_water[0] + (np.random.random() - 0.5) * 20
+                        target_y = nearest_water[1] + (np.random.random() - 0.5) * 20
+                        creature.movement.set_goal_go_to(target_x, target_y)
                         creature.movement.speed_multiplier = speed_multiplier
                         creature.behavior_state.state = BehaviorState.SEEKING_WATER
                 else:
@@ -2628,10 +3308,27 @@ class GameTab(QWidget):
                         # Close enough - STOP and eat
                         creature.movement.set_goal_stay()
                         creature.behavior_state.state = BehaviorState.SEEKING_FOOD
-                        self._try_eat_food(creature)
+                        
+                        # Try to eat
+                        success = self._try_eat_food(creature)
+                        
+                        if success:
+                            creature.consecutive_eat_fails = 0
+                        else:
+                            creature.consecutive_eat_fails += 1
+                            if creature.consecutive_eat_fails > 3:
+                                # Stuck! Force explore
+                                creature.forced_explore_timer = 2.0 + np.random.random() * 2.0
+                                creature.consecutive_eat_fails = 0
+                                # Push away slightly
+                                creature.body.motor.vx = (np.random.random() - 0.5) * 50
+                                creature.body.motor.vy = (np.random.random() - 0.5) * 50
                     else:
                         # Still approaching - move toward food (faster when desperate)
-                        creature.movement.set_goal_go_to(nearest_food[0], nearest_food[1])
+                        # Add slight randomness to target to prevent stacking
+                        target_x = nearest_food[0] + (np.random.random() - 0.5) * 20
+                        target_y = nearest_food[1] + (np.random.random() - 0.5) * 20
+                        creature.movement.set_goal_go_to(target_x, target_y)
                         creature.movement.speed_multiplier = speed_multiplier
                         creature.behavior_state.state = BehaviorState.SEEKING_FOOD
                 else:
@@ -2693,24 +3390,130 @@ class GameTab(QWidget):
             else:
                 creature.movement.set_goal_wander()
                 creature.movement.speed_multiplier = 1.0  # Normal speed
+                
+                # === TOOL PICKUP - Opportunistic collection while wandering ===
+                # Check for nearby tools and pick them up
+                if not hasattr(creature, 'held_tool') or creature.held_tool is None:
+                    nearby_tools = self.world.get_nearby_tools(cx, cy, radius=40)
+                    if nearby_tools:
+                        tool = nearby_tools[0]
+                        if self.world.pickup_tool(tool, str(creature.body.id)):
+                            creature.held_tool = tool
+                            # Small reward for collecting tool (curiosity satisfied)
+                            if creature.embodied_brain is not None:
+                                try:
+                                    if hasattr(creature.embodied_brain.brain, 'learning'):
+                                        creature.embodied_brain.brain.learning.receive_reward(0.1)
+                                except Exception:
+                                    pass
+
+            # === AUTONOMOUS TOOL DROP/THROW DECISIONS (Brain-Based) ===
+            # Each creature's brain influences their tool decisions differently
+            if hasattr(creature, 'held_tool') and creature.held_tool is not None:
+                tool = creature.held_tool
+                should_drop = False
+                should_throw = False
+                throw_direction = 0.0
+                
+                # Get brain chemistry for decision-making (each creature is different)
+                drop_threshold = 0.5  # Default
+                throw_threshold = 0.7  # Default
+                impulsivity = 0.5  # Default
+                
+                if creature.embodied_brain and hasattr(creature.embodied_brain, 'brain'):
+                    try:
+                        brain = creature.embodied_brain.brain
+                        if hasattr(brain, 'learning') and hasattr(brain.learning, 'neuromod'):
+                            neuromod = brain.learning.neuromod
+                            levels = neuromod.levels if hasattr(neuromod, 'levels') else {}
+                            
+                            # Brain chemistry affects thresholds
+                            dopamine = levels.get('dopamine', 0.5)
+                            serotonin = levels.get('serotonin', 0.5)
+                            cortisol = levels.get('cortisol', 0.3)
+                            norepinephrine = levels.get('norepinephrine', 0.3)
+                            
+                            # High dopamine = less likely to drop (enjoying the tool)
+                            # Low serotonin = more impulsive (throw more readily)
+                            # High cortisol = stressed, might drop or throw
+                            # High norepinephrine = alert, defensive throwing
+                            
+                            drop_threshold = 0.3 + dopamine * 0.4 - cortisol * 0.2
+                            throw_threshold = 0.9 - norepinephrine * 0.3 - cortisol * 0.2
+                            impulsivity = 0.3 + (1.0 - serotonin) * 0.5 + cortisol * 0.2
+                    except Exception:
+                        pass
+                
+                # Brain-influenced decisions based on creature state
+                current_state = creature.behavior_state.state if hasattr(creature, 'behavior_state') else None
+                
+                # Eating/drinking - drop chance based on how much they value the tool vs food
+                if current_state == BehaviorState.SEEKING_FOOD and hunger > drop_threshold:
+                    should_drop = True
+                elif current_state == BehaviorState.SEEKING_WATER and thirst > drop_threshold:
+                    should_drop = True
+                elif current_state == BehaviorState.MATING:
+                    # Some creatures might keep their tool, impulsive ones drop it
+                    if np.random.random() < impulsivity:
+                        should_drop = True
+                    
+                # Exhaustion - impulsive creatures drop sooner
+                energy_drop_point = 0.05 + (1.0 - impulsivity) * 0.15  # 0.05 to 0.2
+                if creature.body.homeostasis.energy < energy_drop_point:
+                    should_drop = True
+                    
+                # Threat response - brain decides fight (throw) or flight (drop)
+                if hasattr(creature, 'threat_level') and creature.threat_level > throw_threshold:
+                    # Fight response (throw at threat)
+                    should_throw = True
+                    if hasattr(creature, 'threat_direction'):
+                        throw_direction = creature.threat_direction
+                    else:
+                        throw_direction = 0 if creature.body.motor.facing_right else np.pi
+                        
+                # Impulsive random actions based on brain state
+                # High impulsivity + stress = might randomly throw
+                if impulsivity > 0.6 and np.random.random() < 0.005 * impulsivity:
+                    # Impulsive throw!
+                    should_throw = True
+                    throw_direction = np.random.random() * 2 * np.pi
+                
+                # Execute drop or throw
+                if should_throw:
+                    self.world.throw_tool(tool, cx, cy, throw_direction, power=0.5 + impulsivity * 0.4, 
+                                         thrower_id=str(creature.body.id))
+                    creature.held_tool = None
+                elif should_drop:
+                    self.world.drop_tool(tool, cx, cy)
+                    creature.held_tool = None
+
             
-            # === MOVEMENT CONTROLLER EXECUTES GOAL ===
-            movement_result = creature.movement.update(
-                dt, cx, cy, on_ground, in_water, self.world
-            )
-            
-            # Apply movement directly to creature
-            creature.body.motor.vx = movement_result['vx']
-            if movement_result['vy'] is not None:
-                creature.body.motor.vy = movement_result['vy']
-            if movement_result['jump'] and on_ground:
-                creature.body.motor.vy = -creature.movement.jump_power
+            # === CONTROL: NEURAL VS GOAL-BASED ===
+            if creature.use_neural_control and hasattr(creature, 'last_step_data') and creature.last_step_data and 'brain_output' in creature.last_step_data:
+                # NEURAL CONTROL: Brain drives motor directly
+                brain_output = creature.last_step_data['brain_output']
+                creature.body._process_brain_output(brain_output)
+                # Facing direction updated by brain (usually)
+            else:
+                # GOAL-BASED CONTROL: Movement controller executes high-level goal
+                movement_result = creature.movement.update(
+                    dt, cx, cy, on_ground, in_water, self.world
+                )
+                
+                # Apply movement directly to creature
+                creature.body.motor.vx = movement_result['vx']
+                if movement_result['vy'] is not None:
+                    creature.body.motor.vy = movement_result['vy']
+                if movement_result['jump'] and on_ground:
+                    creature.body.motor.vy = -creature.movement.jump_power
+                
+                # Update facing direction
+                creature.body.motor.facing_right = creature.movement.facing_right
             
             # Water no longer blocks or causes drowning - it's just for drinking
             # (Removed swim-up logic)
             
-            # Update facing direction
-            creature.body.motor.facing_right = creature.movement.facing_right
+            # Facing update handled above
             
             # Apply physics (gravity, collisions)
             new_x, new_y, new_vx, new_vy, new_on_ground = self.world.apply_physics(
@@ -2730,19 +3533,46 @@ class GameTab(QWidget):
             # Update homeostasis (hunger, thirst, etc)
             ambient_temp = self.world.get_temperature(new_x, new_y)
             activity = abs(new_vx) / 100.0
+            
+            # Get aging setting
+            aging_speed = 1.0
+            if self.visual_config:
+                aging_speed = getattr(self.visual_config, 'aging_speed', 1.0)
+                
             creature.body.homeostasis.update(dt, creature.body.phenotype.metabolic_rate, 
-                                             ambient_temp, activity)
+                                             ambient_temp, activity,
+                                             aging_speed_setting=aging_speed)
+                                             
+            # === MIGRATION (Walk off edge to new world) ===
+            if new_x > self.world.width + 50 or new_x < -50:
+                 # Auto-export and remove
+                 if self.lineage_system:
+                     self.lineage_system.register_death(creature) # Track as "left"
+                 
+                 # Save to migrations folder
+                 mig_path = Path("migrations") / f"{creature.name}_{int(time.time())}.creature"
+                 save_creature_to_file(creature, mig_path)
+                 
+                 # Remove from world (mark for death/removal)
+                 # We can't safely remove from list during iteration, so we cheat:
+                 creature.body.homeostasis.health = -100 # Kill it so cleanup removes it
+                 print(f"[Migration] {creature.name} migrated to {mig_path}")
+                 continue
             
             # Check hazards
             is_hazard, damage, hazard_type = self.world.is_hazard(new_x, new_y + 5)
             if is_hazard:
                 creature.body.homeostasis.apply_damage(damage * dt * 0.1)
+                creature.last_damage_source = 'hazard'  # Track for behavior state machine
                 # TIER 3: Update cultural knowledge with danger location
                 self.cultural_knowledge.add_danger_location(new_x, new_y, intensity=damage)
                 # TIER 3: Update personal mental map with danger
                 if creature.mental_map is not None:
                     creature.mental_map.remember_danger(new_x, new_y, severity=damage,
                                                          timestamp=self.world.time if self.world else 0)
+            else:
+                # Decay damage source if not taking damage
+                creature.last_damage_source = 'none'
             
             # Update lifetime
             creature.body.lifetime += dt
@@ -2751,7 +3581,12 @@ class GameTab(QWidget):
             # This is where the neural network learns from experience
             # Movement is controlled by the high-level controller above
             # But the brain learns associations: fire → pain → cortisol → weaken synapses
-            if creature.embodied_brain is not None:
+            
+            # OPTIMIZATION: If threading is enabled, this logic runs in background thread (10Hz).
+            # We skip it here to avoid duplication (60Hz + 10Hz) and race conditions.
+            should_run_brain = not (self.use_threading and self.threaded_manager)
+            
+            if creature.embodied_brain is not None and should_run_brain:
                 try:
                     # Get sensory data for brain
                     all_bodies = [c.body for c in self.creatures if c.body.is_alive()]
@@ -2810,27 +3645,24 @@ class GameTab(QWidget):
                     if creature.body.food_eaten > 0:
                         if hasattr(brain, 'receive_reward'):
                             brain.receive_reward(0.5)
-                        
+                    
+                    # Store data for brain inspector visualization
                     if brain_result:
-                         # Store for inspector
-                         creature.embodied_brain.last_step_data = {
-                             'sensory_input': brain_input,
-                             'brain_output': brain_result.get('reservoir_output', np.zeros(64)), # output from process_raw is dict
-                         }
+                        creature.embodied_brain.last_step_data = {
+                            'sensory_input': brain_input,
+                            'brain_output': brain_result.get('reservoir_output', np.zeros(64)),
+                            'drives': drives,
+                            'neuro_changes': neuro_changes,
+                            'reward': brain_result.get('body_reward', 0),
+                        }
                         
                 except Exception as e:
-                    pass  # Brain errors shouldn't crash the game
+                    import traceback
+                    traceback.print_exc()  # Print errors for debugging
         
-        # Mark death time when creature dies (using world time)
-        current_time = self.world.time if self.world else 0
-        for c in self.creatures:
-            if not c.body.is_alive() and not hasattr(c, '_death_time'):
-                c._death_time = current_time
-        
-        # Remove dead creatures after 3 seconds (for death animation)
-        # Keep creatures that are alive OR have been dead less than 3 seconds
-        self.creatures = [c for c in self.creatures 
-                         if c.body.is_alive() or (current_time - getattr(c, '_death_time', current_time)) < 3]
+        # Cleanup of dead creatures is now handled in update_info (Main Thread)
+        # using creature.decay_timer to avoid race conditions.
+        pass
     
     def _combine_motor_outputs(self, brainstem: Dict, instincts: Dict) -> Dict:
         """
@@ -2939,6 +3771,7 @@ class GameTab(QWidget):
         
         # Add pain level for danger detection (CRITICAL for fleeing fire)
         sensory_data['pain'] = creature.body.homeostasis.pain
+        sensory_data['damage_source'] = creature.last_damage_source  # For behavior state machine
         
         # Find nearest hazard for flee targeting
         nearest_hazard = None
@@ -3163,7 +3996,9 @@ class GameTab(QWidget):
                 if food.remaining <= 0.01:
                     self.world.food_sources.remove(food)
                 
-                break  # Only eat one food per frame
+                return True  # Only eat one food per frame
+                
+        return False
     
     def _try_drink_water(self, creature: LivingCreature, water_x: float = None, water_y: float = None):
         """Attempt to drink if near water."""
@@ -3211,24 +4046,39 @@ class GameTab(QWidget):
                 creature.mental_map.remember_water(cx, cy, quality=1.0,
                                                     timestamp=self.world.time if self.world else 0)
             
+            # Play drink sound
+            if np.random.random() < 0.3:
+                self.sound_manager.play('drink', 0.3)
+            
             # Reward brainstem (dopamine learning)
             if creature.brainstem:
                 creature.brainstem.receive_water_reward(drink_amount)
                 
-            # Play drink sound
-            if np.random.random() < 0.3:
-                self.sound_manager.play('drink', 0.2)
                 # Trigger speech
                 self._trigger_speech(creature, "water refresh drink", mood="calm")
                 
                 # TIER 4: Reinforce successful communication
                 if creature.current_speech:
                     self._check_communication_success(creature, 'water', cx, cy)
+                
+            return True
+            
+        return False
     
     def update_info(self):
         """Update info panel."""
         if self.world is None:
             return
+            
+        # TIER 4: Cleanup dead bodies (Main Thread)
+        for c in list(self.creatures):
+            if hasattr(c, 'decay_timer') and c.decay_timer > 5.0:
+                self.creatures.remove(c)
+                # Cleanup selection
+                if self.world_renderer.selected_creature == c:
+                    self.world_renderer.selected_creature = None
+                if self.world_renderer.selected_secondary == c:
+                    self.world_renderer.selected_secondary = None
         
         # Update population labels
         total = len(self.creatures)
@@ -3264,12 +4114,30 @@ class GameTab(QWidget):
             thirst_pct = (1.0 - h.hydration) * 100
             
             self.creature_name.setText(f"Name: {selected.name}")
+            
+            # Gender display
+            gender_text = "Gender: Unknown"
+            if hasattr(selected.body.phenotype, 'gender') and selected.body.phenotype.gender:
+                g = selected.body.phenotype.gender
+                gender_text = f"Gender: {g.symbol} {g.value.capitalize()}"
+            self.creature_gender.setText(gender_text)
+            
             self.creature_health.setText(f"Health: {h.health:.0%}")
             self.creature_energy.setText(f"Energy: {h.energy:.0%}")
             self.creature_hunger.setText(f"Hunger: {hunger_pct:.0f}% (Food: {h.nutrition:.0%})")
             self.creature_thirst.setText(f"Thirst: {thirst_pct:.0f}% (Water: {h.hydration:.0%})")
             self.creature_state.setText(f"State: {state_name}")
             self.creature_age.setText(f"Age: {body.lifetime:.0f}s (Gen {selected.generation})")
+            
+            # Mating stats
+            cooldown = h.mating_cooldown if hasattr(h, 'mating_cooldown') else 0
+            times_mated = h.times_mated if hasattr(h, 'times_mated') else 0
+            offspring = selected.body.offspring_count if hasattr(selected.body, 'offspring_count') else 0
+            if cooldown > 0:
+                self.creature_mating.setText(f"Mating: {times_mated}x | Cooldown: {cooldown:.0f}s | Offspring: {offspring}")
+            else:
+                fertility = h.fertility if hasattr(h, 'fertility') else 0
+                self.creature_mating.setText(f"Mating: {times_mated}x | Fertility: {fertility:.0%} | Offspring: {offspring}")
             
             # Brain info
             if selected.embodied_brain:
@@ -3290,22 +4158,59 @@ class GameTab(QWidget):
                 # Show homeostasis cortisol for brainstem-only creatures
                 cort = body.homeostasis.cortisol
                 self.creature_brain.setText(f"🧠 Brainstem only | Cortisol: {cort:.0%}")
+            
+            # Held tool info
+            if hasattr(selected, 'held_tool') and selected.held_tool is not None:
+                tool = selected.held_tool
+                tool_name = tool.tool_type.value if hasattr(tool.tool_type, 'value') else str(tool.tool_type)
+                self.creature_tool.setText(f"Holding: 🔧 {tool_name.capitalize()}")
+            else:
+                self.creature_tool.setText("Holding: Nothing")
         else:
             self.creature_name.setText("None selected")
+            self.creature_gender.setText("Gender: -")
             self.creature_health.setText("Health: -")
             self.creature_energy.setText("Energy: -")
             self.creature_hunger.setText("Hunger: -")
             self.creature_thirst.setText("Thirst: -")
             self.creature_state.setText("State: -")
             self.creature_age.setText("Age: -")
+            self.creature_mating.setText("Mating: -")
             self.creature_brain.setText("Brain: -")
+            self.creature_tool.setText("Holding: -")
+            
+        # Smart update creature list (icons only) to prevent flickering
+        if self.creature_list.count() != len(self.creatures):
+            self.update_creature_list()
+        else:
+            for i in range(self.creature_list.count()):
+                item = self.creature_list.item(i)
+                # Ensure data is valid (PyQt sometimes loses UserRole if not careful, but here it should be fine)
+                creature = item.data(Qt.ItemDataRole.UserRole)
+                if not creature: 
+                    continue
+                    
+                # Update status icon
+                status = "💀" if not creature.body.is_alive() else "🟢"
+                current_text = item.text()
+                if not current_text.startswith(status):
+                     # Rebuild text
+                     gender_sym = ""
+                     if hasattr(creature.body.phenotype, 'gender') and creature.body.phenotype.gender:
+                         gender_sym = creature.body.phenotype.gender.symbol + " "
+                     new_text = f"{status} {gender_sym}{creature.name}"
+                     item.setText(new_text)
     
     def update_creature_list(self):
         """Update the creature list widget."""
         self.creature_list.clear()
         for creature in self.creatures:
             status = "💀" if not creature.body.is_alive() else "🟢"
-            item = QListWidgetItem(f"{status} {creature.name}")
+            # Show gender symbol
+            gender_sym = ""
+            if hasattr(creature.body.phenotype, 'gender') and creature.body.phenotype.gender:
+                gender_sym = creature.body.phenotype.gender.symbol + " "
+            item = QListWidgetItem(f"{status} {gender_sym}{creature.name}")
             item.setData(Qt.ItemDataRole.UserRole, creature)
             self.creature_list.addItem(item)
         
@@ -3318,6 +4223,32 @@ class GameTab(QWidget):
         creature = item.data(Qt.ItemDataRole.UserRole)
         self.world_renderer.selected_creature = creature
         self.world_renderer.update()
+    
+    def rename_creature_from_list(self, item):
+        """Rename creature on double-click."""
+        from PyQt6.QtWidgets import QInputDialog
+        
+        creature = item.data(Qt.ItemDataRole.UserRole)
+        if not creature:
+            return
+        
+        # Get current name (strip status icons)
+        current_name = creature.name
+        
+        # Show input dialog
+        new_name, ok = QInputDialog.getText(
+            self, 
+            "Rename Creature",
+            f"Enter new name for {current_name}:",
+            text=current_name
+        )
+        
+        if ok and new_name.strip():
+            # Update creature name
+            creature.name = new_name.strip()
+            
+            # Refresh list
+            self.update_creature_list()
     
     def feed_selected(self):
         """Feed the selected creature."""
@@ -3355,127 +4286,514 @@ class GameTab(QWidget):
                 self._breed_pair(selected, other)
                 return
     
-    def _breed_pair(self, parent1: LivingCreature, parent2: LivingCreature):
-        """Create offspring from two parents with genetic inheritance."""
-        from brain.genetics_helper import create_child_phenotype, create_child_brain_config, blend_values
+    def _start_mating(self, parent1: LivingCreature, parent2: LivingCreature):
+        """Initiate mating sequence (visuals -> delay -> baby)."""
+        # 1. Age Check (Prevent babies making babies)
+        # Using puberty_onset_age (usually ~0.1-0.3)
+        if parent1.body.homeostasis.age < parent1.body.homeostasis.puberty_onset_age:
+            return
+        if parent2.body.homeostasis.age < parent2.body.homeostasis.puberty_onset_age:
+            return
 
-        p1 = parent1.body.phenotype
-        p2 = parent2.body.phenotype
-        
-        # 1. Phenotype Inheritance
-        child_phenotype = create_child_phenotype(p1, p2)
-        
-        # Spawn near parents blending position
-        x = (parent1.body.motor.x + parent2.body.motor.x) / 2
-        y = min(parent1.body.motor.y, parent2.body.motor.y) - 20
-        body = CreatureBody(phenotype=child_phenotype, x=x, y=y)
-        
-        # 2. Instinct Inheritance - kept local for now as it depends on instincts dict
-        drive_params = {}
-        for key in ['hunger', 'fear', 'curiosity', 'social', 'reproduction', 'fatigue']:
-            p1_val = None
-            p2_val = None
+        # 2. Existing pre-checks (Gender, Cooldown, Awake, Count)
+        # We duplicate key checks here to fail fast
+        if parent1.body.homeostasis.is_sleeping or parent2.body.homeostasis.is_sleeping:
+            return
             
-            for k, v in parent1.instincts.instincts.items():
-                if key in str(k).lower():
-                    p1_val = v
-                    break
-            for k, v in parent2.instincts.instincts.items():
-                if key in str(k).lower():
-                    p2_val = v
-                    break
+        from brain.creature import Gender
+        g1 = parent1.body.phenotype.gender
+        g2 = parent2.body.phenotype.gender
+        if g1 and g2 and g1 == g2:
+            return
             
-            if p1_val and p2_val:
-                drive_params[key] = blend_values(p1_val.learned_weight, p2_val.learned_weight, 0.1, 0.1, 2.0)
-            else:
-                drive_params[key] = 0.5
+        if parent1.body.homeostasis.mating_cooldown > 0 or parent2.body.homeostasis.mating_cooldown > 0:
+            return
 
-        instincts = InstinctSystem(drive_params)
-        reward_system = RewardSystem()
-        
-        # 3. Brain Inheritance (Neuro-Evolution with Structural Memory)
-        child_brain = None
-        use_neural = parent1.use_neural_control or parent2.use_neural_control
-        
-        if use_neural:
-            # Get parent configs or defaults
-            c1 = parent1.brain.config if parent1.brain and hasattr(parent1.brain, 'config') else BrainConfig()
-            c2 = parent2.brain.config if parent2.brain and hasattr(parent2.brain, 'config') else BrainConfig()
+        # 3. Start Sequence
+        # Check if already mating
+        for pair in self.mating_pairs:
+            if pair['p1'] == parent1 or pair['p2'] == parent1 or pair['p1'] == parent2 or pair['p2'] == parent2:
+                return
+
+        # Set state to MATING (stops movement)
+        if hasattr(parent1, 'behavior_state'):
+            from brain.behavior_state import BehaviorState
+            parent1.behavior_state.state = BehaviorState.MATING
+        if hasattr(parent2, 'behavior_state'):
+            from brain.behavior_state import BehaviorState
+            parent2.behavior_state.state = BehaviorState.MATING
             
-            # Evolve brain hyperparameters
-            child_config = create_child_brain_config(c1, c2)
+        # Add to tracking
+        self.mating_pairs.append({
+            'p1': parent1, 
+            'p2': parent2, 
+            'timer': 2.5, # 2.5 seconds of "love"
+            'start_time': self.world.time if self.world else 0
+        })
+        
+        # Play sound (One cute pop or loop?)
+        if np.random.random() < 0.7:
+             self.sound_manager.play('breed', 0.5)
+
+    def _process_mating_pairs(self, dt: float):
+        """Update ongoing mating sequences."""
+        if not self.mating_pairs:
+            return
             
-            # Instantiate brain with evolved config
-            try:
-                child_brain = ThreeSystemBrain(config=child_config)
+        for pair in self.mating_pairs[:]: # Copy for removal
+            p1 = pair['p1']
+            p2 = pair['p2']
+            
+            # Validation: Are they still close and alive?
+            if not p1.body.is_alive() or not p2.body.is_alive():
+                self.mating_pairs.remove(pair)
+                continue
                 
-                # NSM: Inherit neural topology from parents
-                # Get structural snapshot from fitter parent (or random)
+            dist = np.sqrt((p1.body.motor.x - p2.body.motor.x)**2 + (p1.body.motor.y - p2.body.motor.y)**2)
+            if dist > 60: # Broke up (moved apart)
+                self.mating_pairs.remove(pair)
+                continue
+                
+            # Freeze them (redundant if state is MATING, but safe)
+            p1.body.motor.vx = 0
+            p2.body.motor.vx = 0
+            
+            # Update Timer
+            pair['timer'] -= dt
+            
+            # Finish?
+            if pair['timer'] <= 0:
+                # Spawn Baby!
+                self._breed_pair(p1, p2)
+                
+                # Reset states
+                if hasattr(p1, 'behavior_state'):
+                    from brain.behavior_state import BehaviorState
+                    p1.behavior_state.state = BehaviorState.IDLE
+                if hasattr(p2, 'behavior_state'):
+                    from brain.behavior_state import BehaviorState
+                    p2.behavior_state.state = BehaviorState.IDLE
+                
+                self.mating_pairs.remove(pair)
+
+    def _breed_pair(self, parent1: LivingCreature, parent2: LivingCreature):
+        """
+        Attempt to create offspring from two parents with genetic inheritance.
+        
+        GATING:
+        - Both must be awake (not sleeping)
+        - Both must have no mating cooldown
+        - Max babies per pair: 3
+        - Mating success chance: 60%
+        - Sets 30s cooldown after mating
+        - Visual: Hearts float up from both creatures
+        """
+        from brain.genetics_helper import create_child_phenotype, create_child_brain_config, blend_values
+        
+        # === PRE-CHECKS: Can they mate? ===
+        
+        # 1. Both must be awake
+        if parent1.body.homeostasis.is_sleeping or parent2.body.homeostasis.is_sleeping:
+            return  # Can't mate while sleeping!
+        
+        # 2. Must be opposite genders
+        from brain.creature import Gender
+        g1 = parent1.body.phenotype.gender
+        g2 = parent2.body.phenotype.gender
+        if g1 is None or g2 is None:
+            # If either has no gender assigned, randomly assign one
+            if g1 is None:
+                parent1.body.phenotype.gender = Gender.random()
+                g1 = parent1.body.phenotype.gender
+            if g2 is None:
+                parent2.body.phenotype.gender = Gender.random()
+                g2 = parent2.body.phenotype.gender
+        
+        if g1 == g2:
+            return  # Same gender - can't mate
+        
+        # 3. Both must have no cooldown
+        if parent1.body.homeostasis.mating_cooldown > 0 or parent2.body.homeostasis.mating_cooldown > 0:
+            return  # Still in refractory period
+        
+        # 3. Check if this pair has exceeded max babies
+        p1_id = str(parent1.body.id)
+        p2_id = str(parent2.body.id)
+        pair_key = tuple(sorted([p1_id, p2_id]))
+        
+        if not hasattr(self, '_pair_offspring_count'):
+            self._pair_offspring_count = {}
+        
+        MAX_BABIES_PER_PAIR = 3
+        if self._pair_offspring_count.get(pair_key, 0) >= MAX_BABIES_PER_PAIR:
+            return  # This pair has had enough babies
+        
+        # 4. Success chance (not every mating attempt works)
+        MATING_SUCCESS_CHANCE = 0.6
+        if np.random.random() > MATING_SUCCESS_CHANCE:
+            # Mating attempt failed - still apply short cooldown
+            parent1.body.homeostasis.mating_cooldown = 10.0  # 10s cooldown on failure
+            parent2.body.homeostasis.mating_cooldown = 10.0
+            return
+        
+        # === MATING BEHAVIOR: Visual feedback ===
+        # Set both to MATING state
+        parent1.behavior_state.state = BehaviorState.SOCIALIZING  # TODO: Add MATING state
+        parent2.behavior_state.state = BehaviorState.SOCIALIZING
+        
+        # Trigger heart particles (visual feedback)
+        self._spawn_heart_particles(parent1.body.motor.x, parent1.body.motor.y - 30)
+        self._spawn_heart_particles(parent2.body.motor.x, parent2.body.motor.y - 30)
+        
+        # === OFFSPRING CREATION ===
+        # Calculate litter size based on parents' tendency
+        h1 = parent1.body.homeostasis
+        h2 = parent2.body.homeostasis
+        avg_tendency = (getattr(h1, 'litter_size_tendency', 1.5) + getattr(h2, 'litter_size_tendency', 1.5)) / 2
+        
+        # Check remaining limit (MAX_BABIES_PER_PAIR = 3)
+        import random
+        base_litter = int(round(avg_tendency + np.random.normal(0, 0.5)))
+        num_babies = max(1, min(3, base_litter))
+        
+        print(f'[Breeding] Spawning {num_babies} babies (Target: {avg_tendency:.1f})')
+        
+        for i in range(num_babies):
+            p1 = parent1.body.phenotype
+            p2 = parent2.body.phenotype
+            
+            # 1. Phenotype Inheritance
+            child_phenotype = create_child_phenotype(p1, p2)
+            
+            # Assign random gender to child (50/50 chance)
+            child_phenotype.gender = Gender.random()
+            
+            # Spawn near parents blending position
+            x = (parent1.body.motor.x + parent2.body.motor.x) / 2
+            # Litter spread
+            if num_babies > 1:
+                x += np.random.uniform(-10, 10)
+            y = min(parent1.body.motor.y, parent2.body.motor.y) - 20
+            if num_babies > 1:
+                y += np.random.uniform(-5, 5)
+            body = CreatureBody(phenotype=child_phenotype, x=x, y=y)
+            
+            # === HORMONAL DIMORPHISM (1) - Gender-specific hormone baselines ===
+            if child_phenotype.gender == Gender.MALE:
+                body.homeostasis.testosterone_base = 0.7 + np.random.random() * 0.2  # 0.7-0.9
+                body.homeostasis.estrogen_base = 0.2 + np.random.random() * 0.2      # 0.2-0.4
+            else:  # FEMALE
+                body.homeostasis.testosterone_base = 0.2 + np.random.random() * 0.2  # 0.2-0.4
+                body.homeostasis.estrogen_base = 0.7 + np.random.random() * 0.2      # 0.7-0.9
+            
+            # === EPIGENETIC TRAUMA INHERITANCE (2) ===
+            # Offspring inherit stress markers from both parents
+            h1 = parent1.body.homeostasis
+            h2 = parent2.body.homeostasis
+            
+            # Inherit average of parents' trauma, with some random variation
+            inherited_trauma = (h1.trauma_markers + h2.trauma_markers) / 2
+            body.homeostasis.inherited_caution = min(1.0, inherited_trauma * 0.1 + np.random.random() * 0.1)
+            body.homeostasis.inherited_stress = min(1.0, 
+                (h1.starvation_memory + h2.starvation_memory) / 4 +
+                (h1.pain_memory + h2.pain_memory) / 4
+            )
+            
+            # If either parent nearly died from starvation, child is more cautious about food
+            if h1.starvation_memory > 0.5 or h2.starvation_memory > 0.5:
+                body.homeostasis.starvation_memory = max(h1.starvation_memory, h2.starvation_memory) * 0.6
+            
+            # If either parent suffered extreme pain, child has heightened stress reactivity
+            if h1.pain_memory > 0.5 or h2.pain_memory > 0.5:
+                body.homeostasis.pain_memory = max(h1.pain_memory, h2.pain_memory) * 0.5
+                body.homeostasis.inherited_stress += 0.1
+            
+            # === SEXUAL STRATEGY INHERITANCE (4) ===
+            # Blend parents' reproductive strategies with mutation
+            body.homeostasis.reproductive_strategy = blend_values(
+                h1.reproductive_strategy, h2.reproductive_strategy, 0.1, 0.0, 1.0
+            )
+            body.homeostasis.litter_size_tendency = blend_values(
+                h1.litter_size_tendency, h2.litter_size_tendency, 0.2, 1.0, 5.0
+            )
+            body.homeostasis.parental_investment = blend_values(
+                h1.parental_investment, h2.parental_investment, 0.1, 0.0, 1.0
+            )
+            body.homeostasis.parent_bond_strength = blend_values(
+                h1.parent_bond_strength, h2.parent_bond_strength, 0.1, 0.0, 1.0
+            )
+            
+            # === ESTRUS CYCLE INHERITANCE (5) ===
+            # Females inherit cycle length from mother (with variation)
+            if child_phenotype.gender == Gender.FEMALE:
+                mother_h = h2 if parent2.body.phenotype.gender == Gender.FEMALE else h1
+                body.homeostasis.estrus_cycle_length = mother_h.estrus_cycle_length * (0.8 + np.random.random() * 0.4)
+            
+            # === NEUROTRANSMITTER RECEPTOR INHERITANCE (3) ===
+            body.homeostasis.dopamine_receptor_density = blend_values(
+                h1.dopamine_receptor_density, h2.dopamine_receptor_density, 0.1, 0.5, 1.5
+            )
+            body.homeostasis.serotonin_receptor_density = blend_values(
+                h1.serotonin_receptor_density, h2.serotonin_receptor_density, 0.1, 0.5, 1.5
+            )
+            body.homeostasis.cortisol_receptor_density = blend_values(
+                h1.cortisol_receptor_density, h2.cortisol_receptor_density, 0.1, 0.5, 1.5
+            )
+            body.homeostasis.oxytocin_receptor_density = blend_values(
+                h1.oxytocin_receptor_density, h2.oxytocin_receptor_density, 0.1, 0.5, 1.5
+            )
+            
+            # === MATE PREFERENCE INHERITANCE (8) ===
+            # Inherit preferences with mutation - runaway sexual selection
+            body.homeostasis.preferred_hue = blend_values(
+                h1.preferred_hue, h2.preferred_hue, 0.15, 0.0, 1.0  # Higher mutation for preferences
+            )
+            body.homeostasis.preferred_size = blend_values(
+                h1.preferred_size, h2.preferred_size, 0.1, 0.5, 2.0
+            )
+            body.homeostasis.preference_strength = blend_values(
+                h1.preference_strength, h2.preference_strength, 0.1, 0.0, 1.0
+            )
+            # Display trait slightly mutates - Fisherian runaway
+            body.homeostasis.display_trait_value = blend_values(
+                h1.display_trait_value, h2.display_trait_value, 0.15, 0.0, 2.0
+            )
+            
+            # === TOOL PREFERENCE INHERITANCE (9) ===
+            # Inherit tool preferences from parents (75% chance from same-gender parent)
+            same_gender_parent = parent1 if parent1.body.phenotype.gender == child_phenotype.gender else parent2
+            body.homeostasis.preferred_tool_type = same_gender_parent.body.homeostasis.preferred_tool_type
+            body.homeostasis.tool_specialization = blend_values(
+                h1.tool_specialization, h2.tool_specialization, 0.1, 0.0, 1.0
+            )
+            
+            # === INBREEDING TRACKING (12) ===
+            import uuid
+            body.homeostasis.genetic_lineage_id = str(uuid.uuid4())[:8]
+            body.homeostasis.parent_lineage_ids = [
+                h1.genetic_lineage_id or str(uuid.uuid4())[:8],
+                h2.genetic_lineage_id or str(uuid.uuid4())[:8]
+            ]
+            # Calculate inbreeding coefficient
+            if h1.genetic_lineage_id and h2.genetic_lineage_id:
+                # Same lineage = related
+                if h1.genetic_lineage_id == h2.genetic_lineage_id:
+                    body.homeostasis.inbreeding_coefficient = 0.5  # Siblings
+                elif (h1.genetic_lineage_id in h2.parent_lineage_ids or 
+                      h2.genetic_lineage_id in h1.parent_lineage_ids):
+                    body.homeostasis.inbreeding_coefficient = 0.25  # Parent-child
+                elif set(h1.parent_lineage_ids) & set(h2.parent_lineage_ids):
+                    body.homeostasis.inbreeding_coefficient = 0.125  # Cousins
+                else:
+                    body.homeostasis.inbreeding_coefficient = 0.0  # Unrelated
+            
+            # === BODY SIZE INHERITANCE (14) ===
+            body.homeostasis.body_size_mult = blend_values(
+                h1.body_size_mult, h2.body_size_mult, 0.1, 0.5, 2.0
+            )
+            # Size affects phenotype
+            child_phenotype.size *= body.homeostasis.body_size_mult
+            
+            # === LIFETIME HORMONAL ARCS INHERITANCE (7) ===
+            body.homeostasis.puberty_onset_age = blend_values(
+                h1.puberty_onset_age, h2.puberty_onset_age, 0.05, 0.1, 0.3
+            )
+            body.homeostasis.elder_onset_age = blend_values(
+                h1.elder_onset_age, h2.elder_onset_age, 0.05, 0.5, 0.9
+            )
+            
+            # === GUT-BRAIN AXIS INHERITANCE (5) ===
+            # Offspring inherit maternal microbiome (like real birth/nursing)
+            mother_h = h2 if parent2.body.phenotype.gender == Gender.FEMALE else h1
+            
+            # Start with mother's microbiome composition (with some variation)
+            body.homeostasis.microbiome_lactobacillus = mother_h.microbiome_lactobacillus * (0.7 + np.random.random() * 0.3)
+            body.homeostasis.microbiome_bifidobacteria = mother_h.microbiome_bifidobacteria * (0.7 + np.random.random() * 0.3)
+            body.homeostasis.microbiome_enterococcus = mother_h.microbiome_enterococcus * (0.7 + np.random.random() * 0.3)
+            body.homeostasis.microbiome_pathogenic = mother_h.microbiome_pathogenic * 0.5  # Less pathogenic (clean start)
+            body.homeostasis.microbiome_diversity = mother_h.microbiome_diversity * 0.8  # Diversity takes time to build
+            body.homeostasis.gut_health = 0.9  # Babies start with healthy guts
+            
+            # 2. Instinct Inheritance - kept local for now as it depends on instincts dict
+            drive_params = {}
+            for key in ['hunger', 'fear', 'curiosity', 'social', 'reproduction', 'fatigue']:
+                p1_val = None
+                p2_val = None
+                
+                for k, v in parent1.instincts.instincts.items():
+                    if key in str(k).lower():
+                        p1_val = v
+                        break
+                for k, v in parent2.instincts.instincts.items():
+                    if key in str(k).lower():
+                        p2_val = v
+                        break
+                
+                if p1_val and p2_val:
+                    drive_params[key] = blend_values(p1_val.learned_weight, p2_val.learned_weight, 0.1, 0.1, 2.0)
+                else:
+                    drive_params[key] = 0.5
+            
+            # === SEXUAL DIMORPHISM BRAIN WIRING (10) ===
+            # Gender affects baseline instinct weights
+            if child_phenotype.gender == Gender.MALE:
+                drive_params['fear'] = max(0.1, drive_params.get('fear', 0.5) - 0.1)  # Males less fearful
+                drive_params['curiosity'] = min(0.9, drive_params.get('curiosity', 0.5) + 0.1)  # More exploratory
+            else:
+                drive_params['social'] = min(0.9, drive_params.get('social', 0.5) + 0.1)  # Females more social
+                drive_params['fear'] = min(0.9, drive_params.get('fear', 0.5) + 0.05)  # More cautious
+    
+            instincts = InstinctSystem(drive_params)
+            reward_system = RewardSystem()
+            
+            # 3. Brain Inheritance (Neuro-Evolution with Structural Memory)
+            # ALL babies get a brain - even if parents are brainstem-only
+            child_brain = None
+            use_neural = True  # Always give babies a brain
+            
+            # Get actual brain references (could be in .brain or .embodied_brain.brain)
+            p1_brain = parent1.brain
+            if p1_brain is None and parent1.embodied_brain is not None:
+                p1_brain = parent1.embodied_brain.brain
+                
+            p2_brain = parent2.brain
+            if p2_brain is None and parent2.embodied_brain is not None:
+                p2_brain = parent2.embodied_brain.brain
+            
+            # Determine brain scale - inherit from parent if available, otherwise small
+            parent_has_brain = (p1_brain and hasattr(p1_brain, 'config')) or \
+                              (p2_brain and hasattr(p2_brain, 'config'))
+            
+            if parent_has_brain:
+                # Get parent configs or defaults
+                c1 = p1_brain.config if p1_brain and hasattr(p1_brain, 'config') else BrainConfig()
+                c2 = p2_brain.config if p2_brain and hasattr(p2_brain, 'config') else BrainConfig()
+                
+                # Evolve brain hyperparameters
+                child_config = create_child_brain_config(c1, c2)
+                
+                # Instantiate brain with evolved config
+                try:
+                    child_brain = ThreeSystemBrain(config=child_config)
+                    print(f"[Birth] Created brain for child with {child_config.num_columns} columns")
+                    
+                    # NSM: Inherit neural topology from parents
+                    # Get structural snapshot from fitter parent (or random)
+                    donor_brain = p1_brain if parent1.body.homeostasis.health > parent2.body.homeostasis.health else p2_brain
+                    if donor_brain and hasattr(donor_brain, 'get_structural_snapshot'):
+                        try:
+                            parent_snapshot = donor_brain.get_structural_snapshot()
+                            # Mutation rate scales with generation (older lineages more stable)
+                            child_generation = max(parent1.generation, parent2.generation) + 1
+                            mutation_rate = max(0.05, 0.2 - 0.01 * child_generation)
+                            child_brain.load_structural_snapshot(parent_snapshot, mutation_rate=mutation_rate)
+                            print(f"[NSM] Child inherited neural topology from parent")
+                        except Exception as e:
+                            print(f"[NSM] Structural inheritance failed: {e}")
+                            
+                except Exception as e:
+                    print(f"Error creating brain for child: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    child_brain = None
+            
+            # Fallback: if no brain created yet, create a fresh one
+            if child_brain is None:
+                try:
+                    from brain import create_brain
+                    child_brain = create_brain(scale="small")
+                    print(f"[Birth] Created fallback small brain for offspring")
+                except Exception as e:
+                    print(f"Error creating fallback brain: {e}")
+                    child_brain = None
+            
+            # Wrap in EmbodiedBrain if we have a brain
+            child_embodied = None
+            if child_brain:
+                try:
+                    child_embodied = EmbodiedBrain(brain=child_brain, body=body)
+                except Exception as e:
+                    print(f"Failed to embody child brain: {e}")
+    
+            # 4. Create Offspring
+            child = LivingCreature(
+                body=body,
+                brain=child_brain,
+                instincts=instincts,
+                reward_system=reward_system,
+                embodied_brain=child_embodied,
+                generation=max(parent1.generation, parent2.generation) + 1,
+                use_neural_control=use_neural or (child_brain is not None)
+            )
+            
+            # Initialize embodied brain connection if neural
+            # Note: child_embodied is already created above with correct arguments
+            if child.brain and child.embodied_brain is None:
+                 child.embodied_brain = EmbodiedBrain(brain=child.brain, body=child.body)
+                 
+            # TIER 3: Mental Map Inheritance - pass spatial knowledge to offspring
+            if child.mental_map is not None:
+                # Inherit from fitter parent's mental map
                 donor_parent = parent1 if parent1.body.homeostasis.health > parent2.body.homeostasis.health else parent2
-                if donor_parent.brain and hasattr(donor_parent.brain, 'get_structural_snapshot'):
-                    try:
-                        parent_snapshot = donor_parent.brain.get_structural_snapshot()
-                        # Mutation rate scales with generation (older lineages more stable)
-                        child_generation = max(parent1.generation, parent2.generation) + 1
-                        mutation_rate = max(0.05, 0.2 - 0.01 * child_generation)
-                        child_brain.load_structural_snapshot(parent_snapshot, mutation_rate=mutation_rate)
-                        print(f"[NSM] Child inherited neural topology from parent (gen {donor_parent.generation})")
-                    except Exception as e:
-                        print(f"[NSM] Structural inheritance failed: {e}")
-                        
-            except Exception as e:
-                print(f"Error creating brain for child: {e}")
-                child_brain = None 
+                if donor_parent.mental_map is not None:
+                    inherited_map = donor_parent.mental_map.get_inheritable_map(strength=0.4)
+                    child.mental_map.merge_from(inherited_map, trust_level=0.6)
+                    # Also merge some knowledge from the other parent
+                    other_parent = parent2 if donor_parent == parent1 else parent1
+                    if other_parent.mental_map is not None:
+                        other_map = other_parent.mental_map.get_inheritable_map(strength=0.2)
+                        child.mental_map.merge_from(other_map, trust_level=0.3)
+            
+            # Inherit Lineage
+            if parent1.body.homeostasis.genetic_lineage_id:
+                child.body.homeostasis.genetic_lineage_id = parent1.body.homeostasis.genetic_lineage_id
+                
+            self.creatures.append(child)
+            self.lineage_system.register_birth(child, parent_ids=[str(parent1.body.id), str(parent2.body.id)])
+            parent1.body.offspring_count += 1
+            parent2.body.offspring_count += 1
+            
+            # Track pair offspring count
+            self._pair_offspring_count[pair_key] = self._pair_offspring_count.get(pair_key, 0) + 1
+            
+            # Play breed sound
+            self.sound_manager.play('breed', 0.6)
+            # Trigger speech
+            self._trigger_speech(parent1, "love family baby", mood="excited")
+            
+        # 5. Apply Reproduction Cost + Cooldown
+        MATING_COOLDOWN = 30.0  # 30 seconds before can mate again
         
-        # 4. Create Offspring
-        child = LivingCreature(
-            body=body,
-            brain=child_brain,
-            instincts=instincts,
-            reward_system=reward_system,
-            generation=max(parent1.generation, parent2.generation) + 1,
-            use_neural_control=use_neural or (child_brain is not None)
-        )
-        
-        # Initialize embodied brain connection if neural
-        if child.brain:
-             child.embodied_brain = EmbodiedBrain(child.body, child.brain)
-             
-        # TIER 3: Mental Map Inheritance - pass spatial knowledge to offspring
-        if child.mental_map is not None:
-            # Inherit from fitter parent's mental map
-            donor_parent = parent1 if parent1.body.homeostasis.health > parent2.body.homeostasis.health else parent2
-            if donor_parent.mental_map is not None:
-                inherited_map = donor_parent.mental_map.get_inheritable_map(strength=0.4)
-                child.mental_map.merge_from(inherited_map, trust_level=0.6)
-                # Also merge some knowledge from the other parent
-                other_parent = parent2 if donor_parent == parent1 else parent1
-                if other_parent.mental_map is not None:
-                    other_map = other_parent.mental_map.get_inheritable_map(strength=0.2)
-                    child.mental_map.merge_from(other_map, trust_level=0.3)
-        
-        self.creatures.append(child)
-        parent1.body.offspring_count += 1
-        parent2.body.offspring_count += 1
-        
-        # Play breed sound
-        self.sound_manager.play('breed', 0.6)
-        # Trigger speech
-        self._trigger_speech(parent1, "love family baby", mood="excited")
-        
-        # 5. Apply Reproduction Cost
         # Significant energy investment
-        cost = 0.35
+        cost = 0.35 * (1.0 + (num_babies - 1) * 0.5)  # Scale for litter
         parent1.body.homeostasis.energy = max(0.1, parent1.body.homeostasis.energy - cost)
         parent2.body.homeostasis.energy = max(0.1, parent2.body.homeostasis.energy - cost)
         
-        # Reset fertility/drive (conceptual - drive will drop naturally if we had a reset mechanism, 
-        # but instincts are stateless mostly. We can manually lower the reproduction drive if we could access it directly
-        # but drives are calculated from body state usually. 
-        # For now, the energy drop naturally reduces "readiness" in many systems)
+        # Set mating cooldown (refractory period)
+        parent1.body.homeostasis.mating_cooldown = MATING_COOLDOWN
+        parent2.body.homeostasis.mating_cooldown = MATING_COOLDOWN
+        parent1.body.homeostasis.times_mated += 1
+        parent2.body.homeostasis.times_mated += 1
+        parent1.body.homeostasis.last_mate_id = p2_id
+        parent2.body.homeostasis.last_mate_id = p1_id
         
         self.world_renderer.set_creatures(self.creatures)
         self.update_creature_list()
+    
+    def _spawn_heart_particles(self, x: float, y: float):
+        """Spawn floating heart particles at position for mating visual feedback."""
+        # Add to particle system if we have one, otherwise just log
+        if hasattr(self, 'particles'):
+            for i in range(3):
+                self.particles.append({
+                    'type': 'heart',
+                    'x': x + np.random.uniform(-20, 20),
+                    'y': y,
+                    'vy': -30 - np.random.uniform(0, 20),  # Float upward
+                    'life': 2.0,  # 2 seconds
+                    'alpha': 1.0
+                })
+        # If no particle system, the hearts simply won't show (graceful degradation)
 
     def save_game(self):
         import json
@@ -3716,7 +5034,7 @@ class GameTab(QWidget):
                 reward_system=reward_system,
                 embodied_brain=embodied,
                 generation=0,
-                use_neural_control=False,
+                use_neural_control=True,  # ENABLE NEURAL CONTROL
                 name=data.get('name', 'TemplateCreature')
             )
         except Exception:
@@ -3734,7 +5052,16 @@ class GameTab(QWidget):
         self.update_creature_list()
 
     def _check_communication_success(self, speaker: LivingCreature, meaning: str, x: float, y: float):
-        """Check if nearby creatures respond to speaker's utterance, reinforcing successful communication."""
+        """
+        Check if nearby creatures respond to speaker's utterance.
+        
+        ENHANCED: Listeners now form NEURAL associations between:
+        - The heard word pattern
+        - The observed action (what speaker is doing)
+        
+        This creates true emergent language - words get meaning from observed context.
+        Later, when the listener performs the same action, the word-pattern may activate.
+        """
         if not speaker.current_speech or not speaker.procedural_language:
             return
         
@@ -3742,6 +5069,9 @@ class GameTab(QWidget):
         gesture = speaker.current_gesture
         speaker_x = speaker.body.motor.x
         speaker_y = speaker.body.motor.y
+        
+        # Get speaker's current behavior state for context
+        speaker_behavior = speaker.behavior_state.state.name if speaker.behavior_state else 'unknown'
         
         # Check nearby creatures
         communication_range = 300  # Distance within which creatures can hear/see
@@ -3757,13 +5087,86 @@ class GameTab(QWidget):
             if dist > communication_range:
                 continue
             
-            # Listener hears the word
+            # === REAL OBSERVATION: What can the listener actually SEE? ===
+            # The listener doesn't "know" the meaning - they have to INFER it
+            # from observable behavior:
+            # - Speaker's behavior state (SEEKING_FOOD, SEEKING_WATER, etc.)
+            # - What objects are near the speaker (food, water, etc.)
+            # - Speaker's body language (gestures)
+            
+            # Infer meaning from observable behavior state
+            observed_action = None
+            if 'FOOD' in speaker_behavior or 'EATING' in speaker_behavior:
+                observed_action = 'food'
+            elif 'WATER' in speaker_behavior or 'DRINKING' in speaker_behavior:
+                observed_action = 'water'
+            elif 'SLEEP' in speaker_behavior:
+                observed_action = 'sleep'
+            elif 'FLEE' in speaker_behavior or 'PAIN' in speaker_behavior.upper():
+                observed_action = 'danger'
+            elif 'SOCIAL' in speaker_behavior or 'MATE' in speaker_behavior:
+                observed_action = 'social'
+            else:
+                # Check what's near the speaker to infer context
+                for food in self.world.foods:
+                    food_dist = np.sqrt((food.x - speaker_x)**2 + (food.y - speaker_y)**2)
+                    if food_dist < 60:  # Speaker is near food
+                        observed_action = 'food'
+                        break
+                
+                if observed_action is None:
+                    for water in self.world.water_sources:
+                        water_dist = np.sqrt((water.x - speaker_x)**2 + (water.y - speaker_y)**2)
+                        if water_dist < 60:  # Speaker is near water
+                            observed_action = 'water'
+                            break
+            
+            # Listener hears the word - provide OBSERVABLE context
             if listener.procedural_language:
                 context = {
                     'speaker_id': str(speaker.body.id),
-                    'observable_action': meaning  # What speaker is doing
+                    'observable_action': observed_action,  # What listener INFERS from observation
+                    'speaker_behavior': speaker_behavior,  # Full behavior state (visible)
+                    'speaker_x': speaker_x,
+                    'speaker_y': speaker_y,
                 }
                 understood_meaning = listener.procedural_language.receive_utterance(word, gesture, context)
+                
+                # === NEURAL ASSOCIATION LEARNING ===
+                # The listener's brain forms connections between:
+                # 1. The auditory pattern of the word
+                # 2. The visual pattern of what the speaker is doing
+                # ONLY learn if we could actually observe what they're doing!
+                if observed_action and listener.embodied_brain is not None:
+                    try:
+                        brain = listener.embodied_brain.brain
+                        
+                        # Encode the word as an auditory pattern
+                        word_pattern = self._encode_word_pattern(word)
+                        
+                        # Encode the OBSERVED action as a pattern
+                        action_pattern = self._encode_action_pattern(observed_action, speaker_behavior)
+                        
+                        # Present both patterns to brain simultaneously
+                        # This creates Hebbian association: "neurons that fire together wire together"
+                        if hasattr(brain, 'cortex'):
+                            # Create combined input that associates word with action
+                            combined_input = word_pattern * 0.5 + action_pattern * 0.5
+                            
+                            # Process through cortex - this strengthens connections
+                            # between word-responsive and action-responsive neurons
+                            brain.cortex.process(
+                                input_data=combined_input,
+                                current_time=brain.current_time,
+                                learning_enabled=True,
+                                modulation={'plasticity_mod': 1.5}  # Enhanced plasticity for learning
+                            )
+                            
+                            # Small reward for successful learning
+                            if hasattr(brain, 'learning'):
+                                brain.learning.receive_reward(0.05)
+                    except Exception:
+                        pass  # Don't crash on brain errors
                 
                 # Check if listener responded appropriately (moving towards same resource)
                 if understood_meaning == meaning:
@@ -3771,6 +5174,7 @@ class GameTab(QWidget):
                     listeners_responded += 1
                     
                     # Register with cultural language
+
                     self.cultural_language.register_communication(
                         str(speaker.body.id), word, meaning, success=True
                     )
@@ -3782,6 +5186,66 @@ class GameTab(QWidget):
         else:
             # No one responded - weak negative reinforcement
             speaker.procedural_language.reinforce_communication(word, success=False, reward=-0.1)
+    
+    def _encode_word_pattern(self, word: str) -> np.ndarray:
+        """
+        Encode a word as a neural activation pattern.
+        
+        Each word gets a unique pattern based on its characters.
+        This simulates auditory cortex activation from hearing the word.
+        """
+        # Default input dimension for brain
+        pattern_dim = 100
+        pattern = np.zeros(pattern_dim)
+        
+        # Hash each character to activate specific neurons
+        for i, char in enumerate(word):
+            # Multiple neurons per character for robustness
+            base_idx = hash(char) % (pattern_dim - 3)
+            pattern[base_idx] = 0.8
+            pattern[(base_idx + 1) % pattern_dim] = 0.5
+            pattern[(base_idx + 7 * (i + 1)) % pattern_dim] = 0.6
+        
+        # Normalize
+        if np.max(pattern) > 0:
+            pattern = pattern / np.max(pattern)
+        
+        return pattern
+    
+    def _encode_action_pattern(self, meaning: str, behavior: str) -> np.ndarray:
+        """
+        Encode an observed action as a neural activation pattern.
+        
+        Different actions (drinking, eating, fleeing) activate different
+        regions of the pattern, simulating visual cortex response to observed behavior.
+        """
+        pattern_dim = 100
+        pattern = np.zeros(pattern_dim)
+        
+        # Map meanings to different regions of the neural space
+        action_regions = {
+            'food': (0, 20),
+            'water': (20, 40),
+            'danger': (40, 60),
+            'sleep': (60, 75),
+            'social': (75, 90),
+        }
+        
+        # Activate region based on meaning
+        region = action_regions.get(meaning, (90, 100))
+        start, end = region
+        pattern[start:end] = 0.7 + 0.3 * np.random.random(end - start)
+        
+        # Behavior state adds additional activation
+        behavior_hash = hash(behavior) % 30
+        pattern[behavior_hash:behavior_hash + 5] += 0.3
+        
+        # Normalize
+        pattern = np.clip(pattern, 0, 1)
+        if np.max(pattern) > 0:
+            pattern = pattern / np.max(pattern)
+        
+        return pattern
     
     def update_visual_config(self, config):
         """Update visual configuration from settings."""
